@@ -315,6 +315,7 @@ Swagger 재생성은 `make swag` 입니다.
 | **멱등성 (같은 이름 재요청)** | **통과** | HTTP 409, `infra already exists: aiapp-live-03` |
 | **terminate 삭제** (force 아님) | **통과** | `[Done] Node: serving-1` / `NodeGroup: serving` / `Infra: aiapp-live-03`, 5m39s |
 | **CB-Spider 에서 삭제 확인** | **통과** | us-west-2 / us-east-1 양쪽 vm·vpc·securitygroup·keypair 전부 `count = 0` |
+| **서빙 포트 개방 후 외부 접속** | **통과** | `curl http://<public-ip>:8000/index.html` -> `AI-MCMP-SERVING-OK`, HTTP 200 |
 | 아카이빙 | 통과 | 실패 5건 + 성공 1건 + 삭제 4건 전부 레코드로 남음 |
 | dry-run 게이트 | 통과 (별도 회차) | 배포·제어·삭제 셋 다 `dryRun:true`, 클라우드 미접촉 |
 
@@ -370,19 +371,48 @@ us-east-1 (실패 회차 잔여분)도 최종적으로 전부 `0` 입니다.
 그래서 **응용이 크기를 지정하지 않으면 `rootDiskSize` 를 아예 보내지 않고 이미지 자체 크기를 쓰도록** 고쳤습니다
 (`internal/deploy/service.go`). 우회가 아니라, 근거 없는 값을 빼는 수정입니다.
 
-### 10-4. 아직 확인 못 한 것
+### 10-4. 서빙 포트 실증 (별도 회차)
+
+`serving-probe` 응용으로 노드에서 8000 포트에 실제 리스너를 띄우고 밖에서 호출했습니다.
+
+```
+POST /aiapp/ns/default/deployments
+  {"appId":"serving-probe","infraName":"aiapp-e2e-01","specId":"aws+us-west-2+g5g.xlarge"}
+
+message : aiapp-e2e-01 deployed (2m22s)
+serving : opened=true, port=8000, sourceIp=0.0.0.0/0,
+          securityGroupIds=["aiapp-e2e-01-serving"],
+          endpoints=["http://<public-ip>:8000/index.html"]
+
+$ curl http://<public-ip>:8000/index.html
+AI-MCMP-SERVING-OK          HTTP:200  time:0.335s
+```
+
+Spider 로 본 CSP 규칙에 `inbound TCP 8000 - 8000 0.0.0.0/0` 이 들어가 있습니다.
+
+**다만 이 회차만으로는 규칙이 접속의 원인이라고 말할 수 없습니다.**
+같은 보안그룹에 기본 템플릿(`sg-default`)이 넣은 `inbound TCP 1-65535` 가 이미 있었습니다
+(6-3절). 확인된 것은 "규칙이 CSP 에 정확히 반영되고 엔드포인트가 응답한다"까지이고,
+"제한적인 템플릿에서 이 규칙이 있어야만 열린다"는 아직 실증하지 않았습니다.
+
+### 10-5. 아직 확인 못 한 것
 
 | 항목 | 왜 |
 |---|---|
 | 자연어 intent 의 실제 Messages API 호출 | 이 환경에 API 키가 없음. 루프 자체는 스텁으로만 검증 |
+| 제한적 보안그룹 템플릿에서의 서빙 포트 개방 | `sg-default` 가 전부 열어 두어 대조가 안 됨 (10-4절) |
 | 컨테이너 배포 | 3차년도 항목 |
 | 다중 노드(`nodeCount` > 1) 배포 | 비용 때문에 1대로만 검증 |
 | AWS 외 CSP 에서의 생성 | 비용·시간 때문에 AWS 만 |
-| 배포된 응용의 서빙 포트 접속(`serving.port`) | 보안그룹 인바운드가 22 만 열려 있어 미확인 |
 
-### 10-5. 실증에서 나온 결함 하나를 더 고쳤습니다
+### 10-6. 실증에서 나온 결함 둘을 더 고쳤습니다
 
-**가속기 벤더와 이미지 벤더를 대조하지 않았습니다.**
+**(1) 서빙 포트를 아무도 열지 않았습니다.**
+`serving.port` 가 검증에만 쓰이고 배포에는 안 쓰였습니다. `sg-default` 가 전부 열어 두는
+덕에 드러나지 않았을 뿐, 운영용 제한 템플릿으로 바꾸는 순간 배포는 성공을 보고하고
+엔드포인트만 죽습니다. 이제 노드의 보안그룹에 명시적으로 규칙을 넣고 결과에 엔드포인트를 담습니다 (6-3절).
+
+**(2) 가속기 벤더와 이미지 벤더를 대조하지 않았습니다.**
 `ResolveImage` 가 `isGPUImage=true` 만 보고 골라서, AMD GPU 인스턴스(`g4ad`)에
 NVIDIA Deep Learning AMI 를 붙였습니다. 부팅은 되지만 드라이버가 바인딩되지 않고,
 응용이 장치를 쓰려 할 때가 되어서야 드러납니다. 노드가 멀쩡해 보이는 만큼 일반 이미지보다 나쁩니다.
