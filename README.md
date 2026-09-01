@@ -128,7 +128,7 @@ AppSpec.resources
                         aws+us-west-2+g6.2xlarge (NVIDIA L4 24GB, $0.9776/h)
                                           |
                         POST /ns/system/resources/searchImage
-                        matchedSpecId + osType, GPU 이미지 우선
+                        matchedSpecId + osType, 같은 벤더의 GPU 이미지 우선
                                           v
                         ami-0358c7fed3fc2fbd0 (isGPUImage=true, 드라이버 포함)
                                           |
@@ -264,6 +264,7 @@ Swagger 재생성은 `make swag` 입니다.
 | `AIAPP_TUMBLEBUG_USERNAME` / `_PASSWORD` | | basic auth |
 | `AIAPP_TUMBLEBUG_TIMEOUT` | `20m` | Infra 생성이 동기라 넉넉해야 함 |
 | `AIAPP_TUMBLEBUG_IMAGE_NAMESPACE` | `system` | 이미지 카탈로그가 있는 네임스페이스 |
+| `AIAPP_TUMBLEBUG_SPEC_NAMESPACE` | `system` | 스펙 카탈로그가 있는 네임스페이스 |
 | `AIAPP_TUMBLEBUG_DEFAULT_OS_TYPE` | `ubuntu 22.04` | 응용이 OS 를 안 정했을 때 |
 | **`AIAPP_TUMBLEBUG_DRY_RUN`** | **`true`** | **쓰기 게이트. `false` 로 바꾸면 실제로 과금됨** |
 | `AIAPP_LLM_BASE_URL` | `https://api.anthropic.com` | Messages API 엔드포인트 |
@@ -282,7 +283,7 @@ Swagger 재생성은 `make swag` 입니다.
 | `gofmt` / `go build` / `golangci-lint` | 통과 (0 issues) | |
 | 응용 카탈로그 등록·조회·검증 | 통과 | 필수 필드 누락 시 `{"message":"version required"}` |
 | 가속기 요구 -> 스펙 추천 | 통과 | GPU x1 >=8GiB 조건으로 6건, 최저가 $0.37853/h |
-| 이미지 자동 조회 (GPU 이미지 우선) | 통과 | arm64 스펙에 `ami-0fc9719148d3c8367` (ARM64 GPU AMI) 선택 |
+| 이미지 자동 조회 (같은 벤더의 GPU 이미지 우선) | 통과 | arm64 NVIDIA 스펙에 `ami-0fc9719148d3c8367` (ARM64 NVIDIA GPU AMI) 선택 |
 | 배포 사전 검증(`infraDynamicReview`) | 통과 | `creationViable=true`, `$0.4200/hour` |
 | **실제 VM 생성** | **통과** | `aiapp-live-03` 생성 2m28s, `Running:1 (R:1/1)`, EC2 `i-xxxxxxxxxxxxxxxxx` |
 | **응용 설치(`postCommands`) 실행** | **통과** | 노드에서 `nvidia-smi` -> `NVIDIA T4G, 15360 MiB, 595.71.05`, `AI-MCMP-PROBE-OK` |
@@ -354,12 +355,23 @@ us-east-1 (실패 회차 잔여분)도 최종적으로 전부 `0` 입니다.
 | AWS 외 CSP 에서의 생성 | 비용·시간 때문에 AWS 만 |
 | 배포된 응용의 서빙 포트 접속(`serving.port`) | 보안그룹 인바운드가 22 만 열려 있어 미확인 |
 
-### 10-5. 발견했지만 고치지 않은 것 (범위 밖)
+### 10-5. 실증에서 나온 결함 하나를 더 고쳤습니다
 
-**가속기 벤더와 이미지 벤더를 대조하지 않습니다.**
-`ResolveImage` 는 `isGPUImage=true` 만 보고 고르기 때문에, AMD GPU 인스턴스(`g4ad`)에
-NVIDIA Deep Learning AMI 를 붙였습니다. 부팅은 되지만 드라이버가 맞지 않습니다.
-고치려면 `acceleratorModel` -> 드라이버 벤더 매핑이 필요하고, 이는 규격 확장이라 보고만 합니다.
+**가속기 벤더와 이미지 벤더를 대조하지 않았습니다.**
+`ResolveImage` 가 `isGPUImage=true` 만 보고 골라서, AMD GPU 인스턴스(`g4ad`)에
+NVIDIA Deep Learning AMI 를 붙였습니다. 부팅은 되지만 드라이버가 바인딩되지 않고,
+응용이 장치를 쓰려 할 때가 되어서야 드러납니다. 노드가 멀쩡해 보이는 만큼 일반 이미지보다 나쁩니다.
+
+이제 스펙의 `acceleratorModel` 에서 벤더를 뽑아, **같은 벤더의 가속기 이미지일 때만** 우선합니다.
+없으면 일반 이미지로 내려가되 이유를 남깁니다. 벤더를 알 수 없으면 종전대로 동작합니다.
+
+실측 (같은 응용, 스펙만 바꿈):
+
+| 스펙 | 가속기 | 고른 이미지 | 이유 |
+|---|---|---|---|
+| `aws+us-west-2+g4ad.xlarge` | AMD RADEON PRO V520 | `ami-0b29ba40f35aad99d` (일반) | `no amd accelerator image is registered for this spec ...` |
+| `aws+us-west-2+g5g.xlarge` | NVIDIA T4G | `ami-0fc9719148d3c8367` (ARM64 GPU) | `accelerator image: ships the vendor driver` |
+| `aws+us-west-2+g6.2xlarge` | NVIDIA L4 | `ami-0358c7fed3fc2fbd0` (GPU) | `accelerator image: ships the vendor driver` |
 
 ## 11. 안 넣은 것 (빠뜨린 게 아니라 뺀 것)
 

@@ -36,6 +36,8 @@ type Service struct {
 	catalog   *catalog.Store
 	// imageNamespace holds the shared image catalog images are searched in.
 	imageNamespace string
+	// specNamespace holds the shared spec catalog specs are read from.
+	specNamespace string
 	// defaultOSType is the image family used when an application does not name one.
 	defaultOSType string
 	// dryRun blocks every call that would change infrastructure. It is a service
@@ -50,6 +52,7 @@ func NewService(client *tumblebug.Client, store *catalog.Store, cfg config.Tumbl
 		tumblebug:      client,
 		catalog:        store,
 		imageNamespace: cfg.ImageNamespace,
+		specNamespace:  cfg.SpecNamespace,
 		defaultOSType:  cfg.DefaultOSType,
 		dryRun:         cfg.DryRun,
 	}

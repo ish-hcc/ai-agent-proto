@@ -37,6 +37,9 @@ type ImageInfo struct {
 	ProviderName   string `json:"providerName"`
 	OSType         string `json:"osType"`
 	OSArchitecture string `json:"osArchitecture"`
+	// OSDistribution names the image build, and is where the accelerator vendor
+	// shows up ("Deep Learning ARM64 Base OSS Nvidia Driver GPU AMI ...").
+	OSDistribution string `json:"osDistribution"`
 	// IsGPUImage marks an image that already carries accelerator drivers, which
 	// is what an AI application needs to start without a driver install step.
 	IsGPUImage   bool `json:"isGPUImage"`

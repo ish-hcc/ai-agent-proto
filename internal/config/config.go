@@ -39,6 +39,10 @@ type TumblebugConfig struct {
 	// ImageNamespace holds the shared node image catalog, which is not the
 	// namespace a deployment is created in.
 	ImageNamespace string
+	// SpecNamespace holds the shared node spec catalog. It is separate from
+	// ImageNamespace because the two catalogs are separate resource types, even
+	// though a default install keeps both in the same namespace.
+	SpecNamespace string
 	// DefaultOSType is the image family used when an application does not name one.
 	DefaultOSType string
 	// DryRun keeps every infrastructure-changing tool from reaching CB-Tumblebug.
@@ -77,6 +81,7 @@ func Load() (*Config, error) {
 	v.SetDefault("tumblebug.timeout", 20*time.Minute)
 	v.SetDefault("tumblebug.credential_holder", "")
 	v.SetDefault("tumblebug.image_namespace", "system")
+	v.SetDefault("tumblebug.spec_namespace", "system")
 	v.SetDefault("tumblebug.default_os_type", "ubuntu 22.04")
 	v.SetDefault("tumblebug.dry_run", true)
 	v.SetDefault("llm.base_url", "https://api.anthropic.com")
@@ -95,6 +100,7 @@ func Load() (*Config, error) {
 		"tumblebug.timeout",
 		"tumblebug.credential_holder",
 		"tumblebug.image_namespace",
+		"tumblebug.spec_namespace",
 		"tumblebug.default_os_type",
 		"tumblebug.dry_run",
 		"llm.base_url",
@@ -121,6 +127,7 @@ func Load() (*Config, error) {
 			Timeout:          v.GetDuration("tumblebug.timeout"),
 			CredentialHolder: v.GetString("tumblebug.credential_holder"),
 			ImageNamespace:   v.GetString("tumblebug.image_namespace"),
+			SpecNamespace:    v.GetString("tumblebug.spec_namespace"),
 			DefaultOSType:    v.GetString("tumblebug.default_os_type"),
 			DryRun:           v.GetBool("tumblebug.dry_run"),
 		},
@@ -157,6 +164,9 @@ func (c *Config) validate() error {
 	}
 	if c.Tumblebug.ImageNamespace == "" {
 		return fmt.Errorf("%s_TUMBLEBUG_IMAGE_NAMESPACE is required", envPrefix)
+	}
+	if c.Tumblebug.SpecNamespace == "" {
+		return fmt.Errorf("%s_TUMBLEBUG_SPEC_NAMESPACE is required", envPrefix)
 	}
 	if c.Tumblebug.DefaultOSType == "" {
 		return fmt.Errorf("%s_TUMBLEBUG_DEFAULT_OS_TYPE is required", envPrefix)
