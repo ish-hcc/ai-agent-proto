@@ -1,0 +1,392 @@
+# ai-agent-proto - AI 응용 자동화 에이전트 (1차년도 프로토타입)
+
+> AI-MCMP 과제 ㈜이노그리드 담당 1차년도 항목 중 두 블록의 프로토타입입니다.
+>
+> - **AI-App ④** AI반도체 기반 **AI 응용 배포 및 운용** (메타데이터 규격 / 등록·배포 / 라이프사이클)
+> - **AI-Ops ⑥** **AI 응용 자동화 에이전트** (구조 설계 / 배포·제어 자동화 / 정보 아카이빙)
+>
+> 설계 근거: [`../ai-agent-research/06-design-implications.md`](../ai-agent-research/06-design-implications.md)
+
+## 1. 이게 뭘 하는 건가 - 한 문장
+
+> **AI 응용(vLLM 같은 추론 서버)의 메타데이터를 등록해 두고, 운영자가 자연어로 지시하면
+> LLM 이 CB-Tumblebug API 호출을 결정해 AI반도체 VM 에 그 응용을 올리고 제어하며,
+> 그 과정을 전부 아카이빙하는 Go 서비스.**
+
+실제로 확인된 동작은 이렇습니다 (2026-09-01, 사내 CB-Tumblebug `<tumblebug-host>:1323`).
+
+```
+$ curl -X POST .../aiapp/ns/default/deployments -d '{"appId":"vllm-llama31-8b","infraName":"vllm-lab-01"}'
+
+dryRun  : true
+message : Dry run: vllm-lab-01 reviewed but not provisioned
+spec    : aws+us-west-2+g6.2xlarge | recommended | gpu NVIDIA L4 x1 (24 GB)
+image   : ami-0358c7fed3fc2fbd0    | resolved    | accelerator image: ships the vendor driver
+estCost : $0.9776/hour
+review  : creationViable=true, "All VMs can be created successfully"
+```
+
+**입력은 "GPU 24GiB 이상"이라는 응용의 요구사항 하나뿐입니다.**
+어느 CSP 의 어느 리전에 어떤 인스턴스 타입을 쓸지, 어떤 이미지로 부팅할지는 이 서비스가 정합니다.
+
+## 2. 왜 이렇게 만들었나 - 다섯 개의 설계 결정
+
+근거는 전부 [`../ai-agent-research`](../ai-agent-research) 의 사례 조사에 있습니다.
+
+| # | 결정 | 근거 |
+|---|---|---|
+| 1 | 계층을 넷으로 자름 (카탈로그 / 도구 / 에이전트 / 아카이브) | 컨소시엄 담당 경계가 아직 유동적이라, 어느 쪽이 넘어가도 계층 하나만 잘리게 |
+| 2 | 한 번에 계획을 다 뽑지 않고 **반복 루프** | 배포는 체인이고 중간 결과가 다음 호출을 바꿈 (HolmesGPT 의 ReAct 구조) |
+| 3 | **런타임 축과 가속기 축을 분리** | 국산 NPU 는 vLLM 플러그인으로 붙음. 합치면 가속기 늘 때마다 규격이 깨짐 |
+| 4 | VM 생성과 응용 설치를 **한 호출로** | CB-Tumblebug `InfraDynamicReq.postCommands` 확인. 별도 SSH 채널 불필요 |
+| 5 | **쓰기는 기본적으로 실행 안 됨** (dry-run 기본 ON) | AWS MCP 도 쓰기를 안 열었고, CB-Tumblebug MCP 는 스스로 PoC 경고 |
+
+## 3. 구조
+
+```
+   자연어 지시 ─────────────────────────┐
+                                       v
+POST /aiapp/ns/{ns}/intents      [ internal/agent ]
+                                  LLM 에 "무엇을 부를지" 묻는 반복 루프
+                                       │  tool_use / tool_result
+                                       v
+                                 [ internal/tools ]
+                                  등급(read/review/write/destructive)별 게이트
+                                       │
+                    ┌──────────────────┼──────────────────┐
+                    v                  v                  v
+            [ internal/catalog ]  [ internal/deploy ]  [ internal/archive ]
+             AI 응용 메타데이터    요구사항 -> 스펙/이미지   JSON Lines 레코드
+                                  -> 배포 요청 조립
+                                       │
+                                       v
+                              [ internal/tumblebug ]
+                                       │
+                                       v
+                             CB-Tumblebug REST API
+```
+
+`internal/llm` 은 Anthropic Messages API 어댑터이고 `internal/rest` 는 Echo 라우팅입니다.
+
+### 3-1. 왜 도구 계층이 따로 있나
+
+에이전트를 거치지 않고 REST 로 직접 배포할 수도 있습니다. 두 경로가 **같은 서비스 계층**을 쓰므로,
+LLM 이 붙든 안 붙든 동작과 아카이브 형태가 같습니다.
+그리고 도구 목록은 `GET /aiapp/tools` 로 노출되므로, 나중에 AI-Ops 프레임워크 골격이
+BESP/ETRI 것으로 정해져도 그 위에 같은 도구를 다시 얹을 수 있습니다.
+
+## 4. AI 응용 메타데이터 규격 (1차년도 ④ 산출물)
+
+`internal/model/app.go` 의 `AppSpec` 입니다. 핵심은 **런타임과 가속기가 서로 다른 필드**라는 점입니다.
+
+```json
+{
+  "id": "vllm-llama31-8b",
+  "name": "vLLM Llama 3.1 8B Instruct",
+  "version": "0.1.0",
+  "runtime": "vllm",                       // 엔진 축
+  "runtimeVersion": "0.6.3",
+  "model":  { "id": "meta-llama/Llama-3.1-8B-Instruct", "format": "safetensors", "sizeGiB": 16 },
+  "accelerator": {                          // AI반도체 축 (엔진과 독립)
+    "type": "gpu",
+    "minCount": 1,
+    "minMemoryGiB": 22
+  },
+  "resources": { "minVCPU": 8, "minMemoryGiB": 32, "rootDiskGiB": 120 },
+  "serving":   { "port": 8000, "healthPath": "/health", "protocol": "http" },
+  "install":   { "userName": "cb-user", "timeoutMinutes": 45, "commands": ["..."] },
+  "deployTargets": ["vm"]
+}
+```
+
+| 필드군 | 무엇에 쓰이나 |
+|---|---|
+| `runtime` / `runtimeVersion` | 배포 단위. 가속기가 GPU 에서 NPU 로 바뀌어도 이 값은 안 바뀜 |
+| `accelerator` | **그대로 CB-Tumblebug 스펙 필터로 변환됨** (아래 5절) |
+| `model` | ③ AI 모델 통합 관리와의 접점. 여기서는 참조만 하고 등록은 안 함 |
+| `serving` | ⑤ AI 응용 모니터링과의 접점. 살아 있는지 확인할 포트와 경로 |
+| `install` | CB-Tumblebug `postCommands` 로 그대로 실림 |
+| `deployTargets` | 1차년도 `vm`. 3차년도 `container` 가 들어와도 규격이 안 깨지게 |
+
+기본 등록 항목 3개 (`internal/catalog/seed.go`): vLLM Llama 3.1 8B / Ollama Qwen2.5 7B / Triton ResNet-50.
+
+## 5. 핵심 변환 - 응용 요구사항이 어떻게 인프라가 되나
+
+이 프로토타입에서 실제로 새로 만든 부분이고, 사례 조사에서 아무도 안 하고 있던 부분입니다.
+
+```
+AppSpec.accelerator                     CB-Tumblebug POST /recommendSpec
+  type: "gpu"           ──────────────>   metric acceleratorType   = gpu
+  minCount: 1           ──────────────>   metric acceleratorCount  >= 1
+  minMemoryGiB: 22      ──────────────>   metric acceleratorMemoryGB >= 22
+AppSpec.resources
+  minVCPU: 8            ──────────────>   metric vCPU              >= 8
+  minMemoryGiB: 32      ──────────────>   metric memoryGiB         >= 32
+                        priority: cost, 가장 싼 것부터
+                                          |
+                                          v
+                        aws+us-west-2+g6.2xlarge (NVIDIA L4 24GB, $0.9776/h)
+                                          |
+                        POST /ns/system/resources/searchImage
+                        matchedSpecId + osType, GPU 이미지 우선
+                                          v
+                        ami-0358c7fed3fc2fbd0 (isGPUImage=true, 드라이버 포함)
+                                          |
+                                          v
+                        InfraDynamicReq { nodeGroups + postCommands(install.commands) }
+                                          |
+                        POST /ns/{ns}/infraDynamicReview   <- 아무것도 안 만듦
+                                          v
+                        creationViable / estimatedCost
+                                          |
+                        [ dry-run 게이트 ]  <- 기본값에서 여기서 멈춤
+                                          v
+                        POST /ns/{ns}/infraDynamic
+```
+
+**CSP 이름도 인스턴스 타입도 코드에 없습니다.** 가속기 조건만 있습니다.
+그래서 CSP 를 추가해도 이 코드는 안 바뀌고, 5차년도 목표인 "5개 이상 AI반도체 클라우드"가
+카탈로그 항목 추가로 해결됩니다.
+
+실측 예 (같은 서비스, 응용만 바꿈):
+
+| 응용 | 가속기 요구 | 고른 스펙 | 시간당 |
+|---|---|---|---|
+| vLLM Llama 3.1 8B | gpu x1, >=22GiB, 8vCPU, 32GiB | `aws+us-west-2+g6.2xlarge` NVIDIA L4 24GB | $0.9776 |
+| Ollama Qwen2.5 7B | gpu x1, >=8GiB, 4vCPU, 16GiB | `aws+us-west-2+g4ad.xlarge` AMD RADEON PRO V520 9GB | $0.3785 |
+
+## 6. 안전장치
+
+### 6-1. 도구 등급
+
+`GET /aiapp/tools` 로 그대로 확인할 수 있습니다.
+
+| 등급 | 도구 | dry-run 게이트 |
+|---|---|---|
+| `read` | `list_ai_apps`, `get_ai_app`, `recommend_accelerator_spec`, `resolve_node_image`, `plan_deployment`, `list_deployments`, `get_deployment_status` | 해당 없음. 항상 실행 |
+| `review` | `review_deployment` | 해당 없음. 아무것도 안 만듦 |
+| `write` | `deploy_ai_app`, `control_deployment` | **걸림** |
+| `destructive` | `delete_deployment` | **걸림** |
+
+### 6-2. 실행 여부를 LLM 이 정하지 않는다
+
+`AIAPP_TUMBLEBUG_DRY_RUN` 은 **서비스 설정**이지 요청 파라미터가 아닙니다.
+LLM 이 "확실하니 실행하자"고 해도 `deploy_ai_app` 은 계획과 review 까지만 하고 멈춥니다.
+시스템 프롬프트에는 게이트가 켜져 있다고 알려 주는데, 이것은 **지키라고 부탁하는 게 아니라**
+운영자에게 "다 했습니다"라고 잘못 보고하지 않게 하려는 것입니다. 강제는 도구 계층에서 합니다.
+
+### 6-3. 멱등성
+
+배포 이름(`infraName`)이 키입니다. 생성 전에 네임스페이스의 Infra 목록을 조회해
+같은 이름이 있으면 409 로 거부합니다. 에이전트가 재시도해도 두 번 과금되지 않습니다.
+
+> 목록 조회로 확인하는 이유: CB-Tumblebug 은 **없는 Infra 를 조회하면 404 가 아니라 500** 과
+> `"The infra <id> does not exist."` 를 돌려줍니다 (2026-09-01 실측). 단건 조회로는
+> "없음"과 "상류 장애"를 구분할 수 없습니다.
+
+### 6-4. review 를 항상 먼저 한다
+
+`deploy_ai_app` 은 내부적으로 `plan -> 중복확인 -> review -> (게이트) -> create` 순서가 고정입니다.
+review 는 아무것도 안 만들고 `creationViable` 과 시간당 비용을 돌려줍니다.
+**이 게이트가 실제로 일을 했습니다**: 초기 구현이 이미지 ID 를 `ubuntu22.04` 로 넣었는데
+review 가 `"image 'ubuntu22.04' not found in DB or CSP"` 로 잡아냈고, 그래서 5절의
+이미지 조회 단계를 넣었습니다. 추측한 값이 CSP 까지 안 갔습니다.
+
+## 7. 아카이빙 (1차년도 ⑥ 산출물)
+
+`data/archive/runs.jsonl` 에 한 줄에 한 레코드씩 append 합니다.
+
+레코드에는 **최종 결과만이 아니라** 다음이 전부 들어갑니다.
+
+- 운영자 지시(`intent`)
+- LLM 이 고른 도구와 **인자 전체**(`steps[].input`)
+- 도구 응답(`steps[].output`)
+- **게이트가 막았는지**(`steps[].executed`)와 등급(`steps[].grade`)
+- 소요 시간, 토큰 사용량, 실패 사유
+
+중간 단계를 남기는 이유는 감사 때문만이 아닙니다.
+2차년도 항목이 "배포 정보 수집 및 **추론 재적용**"이고, 그 입력이 이 레코드입니다.
+결과만 남기면 왜 그 결정을 했는지가 사라져서 되먹일 수 없습니다.
+
+에이전트를 거치지 않은 직접 REST 호출도 같은 형태로 남습니다 (`kind`: `deployment` / `control`).
+
+실측 예:
+
+```
+run-dl3xxm60p7x7  intent   Llama 3.1 8B 추론 서버를 GPU 한 장짜리 노드에 올려줘
+  1. list_ai_apps                 read   executed=true
+  2. recommend_accelerator_spec   read   executed=true   {"appId":"vllm-llama31-8b","limit":2}
+  3. deploy_ai_app                write  executed=false  <- 게이트가 막음
+```
+
+## 8. API
+
+`GET /aiapp/api/index.html` 에서 Swagger UI 로 볼 수 있습니다.
+
+| 메서드 | 경로 | 하는 일 |
+|---|---|---|
+| GET | `/aiapp/readyz` | 준비 상태 |
+| GET | `/aiapp/apps` | 등록된 AI 응용 목록 |
+| POST | `/aiapp/apps` | AI 응용 등록 (같은 id 면 새 버전으로 교체) |
+| GET | `/aiapp/apps/{appId}` | AI 응용 조회 |
+| DELETE | `/aiapp/apps/{appId}` | AI 응용 삭제 |
+| GET | `/aiapp/apps/{appId}/specs` | 가속기 요구사항에 맞는 스펙 추천 |
+| POST | `/aiapp/ns/{nsId}/deployments/plan` | 배포 계획만 만듦 (클라우드 미접촉) |
+| POST | `/aiapp/ns/{nsId}/deployments` | 배포 (review 후, 게이트 통과 시 생성) |
+| GET | `/aiapp/ns/{nsId}/deployments` | 배포 목록 |
+| GET | `/aiapp/ns/{nsId}/deployments/{infraId}/status` | 배포 상태 |
+| POST | `/aiapp/ns/{nsId}/deployments/{infraId}/control` | suspend / resume / reboot / terminate |
+| DELETE | `/aiapp/ns/{nsId}/deployments/{infraId}` | 배포 삭제 |
+| POST | `/aiapp/ns/{nsId}/intents` | **자연어 지시 -> 에이전트 실행** |
+| GET | `/aiapp/tools` | 에이전트가 부를 수 있는 도구 목록과 등급 |
+| GET | `/aiapp/archive` | 아카이브 목록 (최신순) |
+| GET | `/aiapp/archive/{runId}` | 아카이브 단건 |
+
+## 9. 실행 방법
+
+```sh
+cp conf/template-setup.env conf/setup.env
+# conf/setup.env 를 채운다 (아래 설정 표 참고)
+source conf/setup.env
+make build
+./bin/ai-agent-proto
+```
+
+`make verify` 는 `gofmt` + `go build` + `golangci-lint` 를 순서대로 돌립니다.
+Swagger 재생성은 `make swag` 입니다.
+
+### 설정
+
+| 환경변수 | 기본값 | 설명 |
+|---|---|---|
+| `AIAPP_SERVER_PORT` | `8090` | 리스닝 포트 |
+| `AIAPP_TUMBLEBUG_BASE_URL` | (필수) | 예 `http://<host>:1323/tumblebug` |
+| `AIAPP_TUMBLEBUG_USERNAME` / `_PASSWORD` | | basic auth |
+| `AIAPP_TUMBLEBUG_TIMEOUT` | `20m` | Infra 생성이 동기라 넉넉해야 함 |
+| `AIAPP_TUMBLEBUG_IMAGE_NAMESPACE` | `system` | 이미지 카탈로그가 있는 네임스페이스 |
+| `AIAPP_TUMBLEBUG_DEFAULT_OS_TYPE` | `ubuntu 22.04` | 응용이 OS 를 안 정했을 때 |
+| **`AIAPP_TUMBLEBUG_DRY_RUN`** | **`true`** | **쓰기 게이트. `false` 로 바꾸면 실제로 과금됨** |
+| `AIAPP_LLM_BASE_URL` | `https://api.anthropic.com` | Messages API 엔드포인트 |
+| `AIAPP_LLM_API_KEY` | | 비어 있으면 `/intents` 만 503, 나머지는 정상 동작 |
+| `AIAPP_LLM_MODEL` | `claude-opus-5` | 계획 수립 모델 |
+| `AIAPP_AGENT_MAX_STEPS` | `12` | 도구 호출 반복 상한 |
+| `AIAPP_ARCHIVE_DIR` | `./data/archive` | 아카이브 위치 |
+
+## 10. 검증 결과 - 실제 VM 생성부터 삭제까지 (2026-09-02)
+
+`AIAPP_TUMBLEBUG_BASE_URL=http://<tumblebug-host>:1323/tumblebug`, `DRY_RUN=false` 로
+**AWS 에 실제 GPU VM 을 만들고, terminate 로 지우고, CB-Spider 에서 사라진 것까지 확인**했습니다.
+
+| 항목 | 결과 | 근거 |
+|---|---|---|
+| `gofmt` / `go build` / `golangci-lint` | 통과 (0 issues) | |
+| 응용 카탈로그 등록·조회·검증 | 통과 | 필수 필드 누락 시 `{"message":"version required"}` |
+| 가속기 요구 -> 스펙 추천 | 통과 | GPU x1 >=8GiB 조건으로 6건, 최저가 $0.37853/h |
+| 이미지 자동 조회 (GPU 이미지 우선) | 통과 | arm64 스펙에 `ami-0fc9719148d3c8367` (ARM64 GPU AMI) 선택 |
+| 배포 사전 검증(`infraDynamicReview`) | 통과 | `creationViable=true`, `$0.4200/hour` |
+| **실제 VM 생성** | **통과** | `aiapp-live-03` 생성 2m28s, `Running:1 (R:1/1)`, EC2 `i-xxxxxxxxxxxxxxxxx` |
+| **응용 설치(`postCommands`) 실행** | **통과** | 노드에서 `nvidia-smi` -> `NVIDIA T4G, 15360 MiB, 595.71.05`, `AI-MCMP-PROBE-OK` |
+| **멱등성 (같은 이름 재요청)** | **통과** | HTTP 409, `infra already exists: aiapp-live-03` |
+| **terminate 삭제** (force 아님) | **통과** | `[Done] Node: serving-1` / `NodeGroup: serving` / `Infra: aiapp-live-03`, 5m39s |
+| **CB-Spider 에서 삭제 확인** | **통과** | us-west-2 / us-east-1 양쪽 vm·vpc·securitygroup·keypair 전부 `count = 0` |
+| 아카이빙 | 통과 | 실패 5건 + 성공 1건 + 삭제 4건 전부 레코드로 남음 |
+| dry-run 게이트 | 통과 (별도 회차) | 배포·제어·삭제 셋 다 `dryRun:true`, 클라우드 미접촉 |
+
+### 10-1. 성공한 회차의 실제 값
+
+```
+POST /aiapp/ns/default/deployments
+  {"appId":"gpu-probe-live","infraName":"aiapp-live-03","specId":"aws+us-west-2+g5g.xlarge"}
+
+message : aiapp-live-03 deployed (2m28s)
+image   : ami-0fc9719148d3c8367 | resolved | accelerator image: ships the vendor driver
+cost    : $0.4200/hour
+node    : serving-1  Running  <public-ip>
+
+postCommand stdout:
+  [0] name, memory.total [MiB], driver_version
+      NVIDIA T4G, 15360 MiB, 595.71.05
+  [1] Linux ip-10-49-6-99 6.8.0-1060-aws ... aarch64 GNU/Linux
+  [2] AI-MCMP-PROBE-OK
+```
+
+`nvidia-smi` 가 도는 것이 이 프로토타입의 주장을 실증합니다.
+**가속기 요구사항만 주면 드라이버가 든 이미지로 GPU 노드가 뜨고 응용 설치까지 한 호출에 끝납니다.**
+
+### 10-2. 삭제 확인 (CB-Spider 직접 조회)
+
+Tumblebug 기록이 아니라 **Spider 를 통해 CSP 실체**를 봤습니다.
+
+| 시점 | vm | vpc | securitygroup | keypair |
+|---|---|---|---|---|
+| 생성 전 | 0 | 0 | 0 | 0 |
+| VM 기동 중 | **1** (`i-xxxxxxxxxxxxxxxxx`) | 1 | 2 | 2 |
+| terminate 직후 | **0** | 1 | 2 | 2 |
+| 공유자원 해제 후 | 0 | **0** | **0** | **0** |
+
+us-east-1 (실패 회차 잔여분)도 최종적으로 전부 `0` 입니다.
+
+### 10-3. 실패한 회차와 원인
+
+성공까지 5번 실패했습니다. 전부 프로토타입 밖의 원인이거나, 이번에 고친 것입니다.
+
+| # | 대상 | 실패 원인 | 성격 |
+|---|---|---|---|
+| 1 | us-west-2 g4ad | `aws-us-east-1: does not exist!` - **Spider 에 자격증명 0건** | 노드 설정. `init.sh --credentials-only` 로 해소 |
+| 2 | us-west-2 g4ad | `InvalidBlockDeviceMapping: Volume of size 50GB is smaller than snapshot, expect >= 75GB` | **프로토타입 결함.** 아래 수정 |
+| 3 | us-west-2 g4ad | Tumblebug 위험도 모델이 #2 이력(1/1 실패)으로 차단 | 상류 안전장치가 정상 동작 |
+| 4 | us-west-2 g6.2xlarge | `InsufficientInstanceCapacity` (us-west-2b) | AWS 용량 |
+| 5 | us-east-1 g6.2xlarge | `VcpuLimitExceeded: current vCPU limit of 0` | AWS 계정 G 인스턴스 쿼터 0 |
+
+**#2 로 고친 것**: `defaultRootDiskGiB = 60` 이라는 근거 없는 기본값을 넣고 있었습니다.
+응용이 요구하지도 않은 루트 디스크 크기를 지어내서 보내다가, 스냅샷이 75GB 인 GPU AMI 에서 거부당했습니다.
+`ImageInfo.osDiskSizeGB` 로 최소치를 알아내려 했으나 이 카탈로그에서는 전부 `-1` 이라 API 로는 알 수 없습니다.
+그래서 **응용이 크기를 지정하지 않으면 `rootDiskSize` 를 아예 보내지 않고 이미지 자체 크기를 쓰도록** 고쳤습니다
+(`internal/deploy/service.go`). 우회가 아니라, 근거 없는 값을 빼는 수정입니다.
+
+### 10-4. 아직 확인 못 한 것
+
+| 항목 | 왜 |
+|---|---|
+| 자연어 intent 의 실제 Messages API 호출 | 이 환경에 API 키가 없음. 루프 자체는 스텁으로만 검증 |
+| 컨테이너 배포 | 3차년도 항목 |
+| 다중 노드(`nodeCount` > 1) 배포 | 비용 때문에 1대로만 검증 |
+| AWS 외 CSP 에서의 생성 | 비용·시간 때문에 AWS 만 |
+| 배포된 응용의 서빙 포트 접속(`serving.port`) | 보안그룹 인바운드가 22 만 열려 있어 미확인 |
+
+### 10-5. 발견했지만 고치지 않은 것 (범위 밖)
+
+**가속기 벤더와 이미지 벤더를 대조하지 않습니다.**
+`ResolveImage` 는 `isGPUImage=true` 만 보고 고르기 때문에, AMD GPU 인스턴스(`g4ad`)에
+NVIDIA Deep Learning AMI 를 붙였습니다. 부팅은 되지만 드라이버가 맞지 않습니다.
+고치려면 `acceleratorModel` -> 드라이버 벤더 매핑이 필요하고, 이는 규격 확장이라 보고만 합니다.
+
+## 11. 안 넣은 것 (빠뜨린 게 아니라 뺀 것)
+
+| 안 넣은 것 | 왜 |
+|---|---|
+| 쿠버네티스 / 컨테이너 배포 | 계획서상 3차년도 항목 |
+| 승인 대기 상태 저장소 | 아카이브 레코드로 대체. 2차년도에 붙일 때 구조가 안 바뀜 |
+| 카탈로그 영속화 | 2차년도 "대규모 AI 응용 통합 저장소" 항목. 지금은 메모리 |
+| `go-playground/validator` | 신규 의존성 승인 전. `validate` 태그는 규격 문서용으로 두고 검증은 명시적으로 함 |
+| 인증·인가 | 프레임워크 골격(BESP/경희대) 확정 전 |
+| ETRI 인프라 추천 연동 | 출력 스키마 미확정. `recommend_accelerator_spec` 도구 하나만 교체하면 됨 |
+
+## 12. 이 프로토타입이 확인해 준 CB-Tumblebug 사실
+
+다른 팀도 겪을 것들이라 적어 둡니다. 전부 2026-09-01 실측입니다.
+
+| 사실 | 영향 |
+|---|---|
+| 리소스 이름이 `mci` 가 아니라 **`infra`** | 옛 문서 기준으로 짜면 전부 404 |
+| 없는 Infra 조회 시 **404 가 아니라 500** | 존재 확인을 단건 조회로 하면 안 됨 |
+| `recommendSpec` 의 `limit` 은 **정수** | 문자열이면 400 |
+| 이미지는 **`system` 네임스페이스**에 있음 | `default` 에서 검색하면 0건 |
+| `searchImage` 의 `matchedSpecId` 로 스펙 호환 이미지를 바로 찾음 | 프로바이더별 이미지 표를 손으로 안 만들어도 됨 |
+| `InfraDynamicReq.postCommands` 로 생성과 설치를 한 호출에 | 별도 배포 채널 불필요 |
+| `infraDynamicReview` 가 생성 없이 검증 + 비용 추정 | plan/apply 분리가 이미 가능 |
+| Tumblebug 의 `connConfig` **`verified: true` 는 Spider 등록을 뜻하지 않음** | 117건 verified 인데 Spider 는 0건이라 아무것도 생성 못 했음 |
+| Spider 자원 조회는 쿼리 파라미터 `?ConnectionName=` (헤더 아님) | 헤더로 보내면 `ConnectionName is empty!` |
+| Tumblebug 은 **spec+image 프로비저닝 실패 이력**으로 이후 요청을 차단함 | 한 번 실패한 조합은 review 가 `creationViable=false` 로 막음 |
+| `ImageInfo.osDiskSizeGB` 가 이 카탈로그에서는 전부 `-1` | 이미지 최소 디스크 크기를 API 로 알 수 없음 |
+| `DELETE /ns/{ns}/sharedResources` 는 Infra 삭제 후에만 동작 | 순서를 지켜야 CSP 의존성 오류가 안 남 |

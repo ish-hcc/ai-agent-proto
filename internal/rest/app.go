@@ -1,0 +1,128 @@
+package rest
+
+import (
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+	"github.com/rs/zerolog/log"
+
+	"github.com/innogrid/ai-agent-proto/internal/model"
+)
+
+// RestGetAllApps godoc
+// @ID GetAllApps
+// @Summary List registered AI applications
+// @Description List every AI application in the catalog with its runtime, model and accelerator requirement
+// @Tags [App] AI Application Catalog
+// @Produce json
+// @Success 200 {object} model.AppSpecListResp "AI application list"
+// @Router /apps [get]
+func (h *Handler) RestGetAllApps(c echo.Context) error {
+	ctx := c.Request().Context()
+	return c.JSON(http.StatusOK, model.AppSpecListResp{Apps: h.catalog.List(ctx)})
+}
+
+// RestPostApp godoc
+// @ID PostApp
+// @Summary Register an AI application
+// @Description Register or replace an AI application metadata record. Replacing an existing id publishes a new version
+// @Tags [App] AI Application Catalog
+// @Accept json
+// @Produce json
+// @Param appSpec body model.AppSpec true "AI application metadata"
+// @Success 200 {object} model.AppSpec "AI application registered"
+// @Failure 400 {object} model.SimpleMsg "Malformed or incomplete metadata"
+// @Router /apps [post]
+func (h *Handler) RestPostApp(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	var spec model.AppSpec
+	if err := c.Bind(&spec); err != nil {
+		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: malformedBody})
+	}
+
+	registered, err := h.catalog.Register(ctx, spec)
+	if err != nil {
+		log.Error().Err(err).Str("appId", spec.ID).Msg("Failed to register AI application")
+		return c.JSON(statusCodeFor(err), model.SimpleMsg{Message: messageFor(err, "AI application registration failed")})
+	}
+	return c.JSON(http.StatusOK, registered)
+}
+
+// RestGetApp godoc
+// @ID GetApp
+// @Summary Get an AI application
+// @Description Read one registered AI application, including its install commands and serving port
+// @Tags [App] AI Application Catalog
+// @Produce json
+// @Param appId path string true "AI application ID" default(vllm-llama31-8b)
+// @Success 200 {object} model.AppSpec "AI application metadata"
+// @Failure 404 {object} model.SimpleMsg "AI application not found"
+// @Router /apps/{appId} [get]
+func (h *Handler) RestGetApp(c echo.Context) error {
+	ctx := c.Request().Context()
+	appID := c.Param("appId")
+
+	spec, err := h.catalog.Get(ctx, appID)
+	if err != nil {
+		log.Warn().Err(err).Str("appId", appID).Msg("Failed to get AI application")
+		return c.JSON(statusCodeFor(err), model.SimpleMsg{Message: "AI application not found"})
+	}
+	return c.JSON(http.StatusOK, spec)
+}
+
+// RestDeleteApp godoc
+// @ID DeleteApp
+// @Summary Delete an AI application
+// @Description Remove an AI application from the catalog. Deployments already running are untouched
+// @Tags [App] AI Application Catalog
+// @Produce json
+// @Param appId path string true "AI application ID"
+// @Success 200 {object} model.SimpleMsg "AI application deleted"
+// @Failure 404 {object} model.SimpleMsg "AI application not found"
+// @Router /apps/{appId} [delete]
+func (h *Handler) RestDeleteApp(c echo.Context) error {
+	ctx := c.Request().Context()
+	appID := c.Param("appId")
+
+	if err := h.catalog.Delete(ctx, appID); err != nil {
+		log.Warn().Err(err).Str("appId", appID).Msg("Failed to delete AI application")
+		return c.JSON(statusCodeFor(err), model.SimpleMsg{Message: "AI application not found"})
+	}
+	return c.JSON(http.StatusOK, model.SimpleMsg{Message: "AI application deleted"})
+}
+
+// RestGetAppSpecs godoc
+// @ID GetAppSpecs
+// @Summary Recommend accelerator specs for an AI application
+// @Description Find node specs across every connected cloud that satisfy the accelerator requirement, cheapest first
+// @Tags [App] AI Application Catalog
+// @Produce json
+// @Param appId path string true "AI application ID" default(vllm-llama31-8b)
+// @Param limit query int false "How many candidates to return" default(5)
+// @Success 200 {array} model.SpecCandidate "Matching node specs"
+// @Failure 404 {object} model.SimpleMsg "AI application not found"
+// @Failure 500 {object} model.SimpleMsg "Spec recommendation failed"
+// @Router /apps/{appId}/specs [get]
+func (h *Handler) RestGetAppSpecs(c echo.Context) error {
+	ctx := c.Request().Context()
+	appID := c.Param("appId")
+
+	spec, err := h.catalog.Get(ctx, appID)
+	if err != nil {
+		log.Warn().Err(err).Str("appId", appID).Msg("Failed to get AI application")
+		return c.JSON(statusCodeFor(err), model.SimpleMsg{Message: "AI application not found"})
+	}
+
+	limit, err := intQueryParam(c, "limit")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "Limit must be a whole number"})
+	}
+
+	candidates, err := h.deploy.RecommendSpecs(ctx, spec, limit)
+	if err != nil {
+		log.Error().Err(err).Str("appId", appID).Msg("Failed to recommend specs")
+		return c.JSON(statusCodeFor(err), model.SimpleMsg{Message: "Spec recommendation failed"})
+	}
+	return c.JSON(http.StatusOK, candidates)
+}
