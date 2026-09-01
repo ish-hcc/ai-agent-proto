@@ -162,6 +162,13 @@ definitions:
         description: NodeCount is how many serving nodes to provision.
         example: 1
         type: integer
+      sgTemplateId:
+        description: |-
+          SGTemplateID pins the security group template provisioning starts from.
+          Empty leaves the cloud manager default, which opens every port and is
+          documented upstream as being for development and testing only.
+        example: sg-usecase-web
+        type: string
       specId:
         description: SpecID pins the node spec. Empty asks for a recommendation first.
         example: aws+us-west-2+g6.xlarge
@@ -209,6 +216,8 @@ definitions:
       request:
         description: Request is the dynamic Infra request body, including the install
           commands.
+      sgTemplateId:
+        type: string
       specId:
         type: string
       specSource:

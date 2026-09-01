@@ -6,11 +6,14 @@ package tumblebug
 
 // InfraDynamicReq is the CB-Tumblebug dynamic provisioning request.
 type InfraDynamicReq struct {
-	Name                   string                      `json:"name"`
-	Description            string                      `json:"description,omitempty"`
-	PolicyOnPartialFailure string                      `json:"policyOnPartialFailure,omitempty"`
-	InstallMonAgent        string                      `json:"installMonAgent,omitempty"`
-	NodeGroups             []CreateNodeGroupDynamicReq `json:"nodeGroups"`
+	Name                   string `json:"name"`
+	Description            string `json:"description,omitempty"`
+	PolicyOnPartialFailure string `json:"policyOnPartialFailure,omitempty"`
+	InstallMonAgent        string `json:"installMonAgent,omitempty"`
+	// SGTemplateID selects the security group template provisioning starts from.
+	// Empty leaves CB-Tumblebug on its own default, which opens every port.
+	SGTemplateID string                      `json:"sgTemplateId,omitempty"`
+	NodeGroups   []CreateNodeGroupDynamicReq `json:"nodeGroups"`
 	// PostCommands run on the provisioned nodes as part of the same call, which
 	// is how an AI application install rides along with provisioning.
 	PostCommands     []PostCommandReq  `json:"postCommands,omitempty"`

@@ -961,6 +961,11 @@ const docTemplate = `{
                     "type": "integer",
                     "example": 1
                 },
+                "sgTemplateId": {
+                    "description": "SGTemplateID pins the security group template provisioning starts from.\nEmpty leaves the cloud manager default, which opens every port and is\ndocumented upstream as being for development and testing only.",
+                    "type": "string",
+                    "example": "sg-usecase-web"
+                },
                 "specId": {
                     "description": "SpecID pins the node spec. Empty asks for a recommendation first.",
                     "type": "string",
@@ -1018,6 +1023,9 @@ const docTemplate = `{
                 },
                 "request": {
                     "description": "Request is the dynamic Infra request body, including the install commands."
+                },
+                "sgTemplateId": {
+                    "type": "string"
                 },
                 "specId": {
                     "type": "string"

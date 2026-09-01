@@ -14,6 +14,10 @@ type DeployAppReq struct {
 	ImageID string `json:"imageId,omitempty" example:"ubuntu22.04"`
 	// NodeCount is how many serving nodes to provision.
 	NodeCount int `json:"nodeCount,omitempty" example:"1"`
+	// SGTemplateID pins the security group template provisioning starts from.
+	// Empty leaves the cloud manager default, which opens every port and is
+	// documented upstream as being for development and testing only.
+	SGTemplateID string `json:"sgTemplateId,omitempty" example:"sg-usecase-web"`
 }
 
 // Validate reports why a deployment request cannot be planned.
@@ -34,13 +38,14 @@ func (r *DeployAppReq) Validate() error {
 // It is produced whether or not the call is actually made, so that a dry run and
 // a real run archive the same shape and stay comparable.
 type DeploymentPlan struct {
-	AppID     string `json:"appId"`
-	AppName   string `json:"appName"`
-	Namespace string `json:"nsId"`
-	InfraName string `json:"infraName"`
-	SpecID    string `json:"specId"`
-	ImageID   string `json:"imageId"`
-	NodeCount int    `json:"nodeCount"`
+	AppID        string `json:"appId"`
+	AppName      string `json:"appName"`
+	Namespace    string `json:"nsId"`
+	InfraName    string `json:"infraName"`
+	SpecID       string `json:"specId"`
+	ImageID      string `json:"imageId"`
+	SGTemplateID string `json:"sgTemplateId,omitempty"`
+	NodeCount    int    `json:"nodeCount"`
 	// SpecSource records how SpecID was chosen: "requested" or "recommended".
 	SpecSource string `json:"specSource"`
 	// ImageSource records how ImageID was chosen: "requested" or "resolved".

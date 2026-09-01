@@ -274,11 +274,12 @@ func deleteTool(service *deploy.Service) Tool {
 
 func deployInputSchema() map[string]any {
 	return object(map[string]any{
-		"appId":     stringProp("Identifier of the registered AI application"),
-		"infraName": stringProp("Name for the deployment. It is also the idempotency key"),
-		"specId":    stringProp("Node spec to pin. Leave empty to pick the cheapest matching spec"),
-		"imageId":   stringProp("Node image to pin. Leave empty for the default"),
-		"nodeCount": integerProp("How many serving nodes to provision. Defaults to 1"),
+		"appId":        stringProp("Identifier of the registered AI application"),
+		"infraName":    stringProp("Name for the deployment. It is also the idempotency key"),
+		"specId":       stringProp("Node spec to pin. Leave empty to pick the cheapest matching spec"),
+		"imageId":      stringProp("Node image to pin. Leave empty for the default"),
+		"sgTemplateId": stringProp("Security group template to start from. Leave empty for the cloud manager default, which opens every port"),
+		"nodeCount":    integerProp("How many serving nodes to provision. Defaults to 1"),
 	}, "appId", "infraName")
 }
 

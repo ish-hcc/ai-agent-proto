@@ -116,6 +116,7 @@ func (s *Service) Plan(ctx context.Context, nsID string, req *model.DeployAppReq
 		Description:            fmt.Sprintf("AI application %s %s", app.ID, app.Version),
 		PolicyOnPartialFailure: partialFailurePolicy,
 		InstallMonAgent:        installMonAgent,
+		SGTemplateID:           req.SGTemplateID,
 		NodeGroups: []tumblebug.CreateNodeGroupDynamicReq{{
 			Name:          "serving",
 			NodeGroupSize: nodeCount,
@@ -141,6 +142,7 @@ func (s *Service) Plan(ctx context.Context, nsID string, req *model.DeployAppReq
 		InfraName:          req.InfraName,
 		SpecID:             specID,
 		ImageID:            imageID,
+		SGTemplateID:       req.SGTemplateID,
 		NodeCount:          nodeCount,
 		SpecSource:         specSource,
 		ImageSource:        imageSource,
