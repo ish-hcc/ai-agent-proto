@@ -227,11 +227,21 @@ func (s *Service) Deploy(ctx context.Context, nsID string, req *model.DeployAppR
 	log.Info().Str("nsId", nsID).Str("infraId", created.ID).Str("status", created.Status).
 		Str("appId", req.AppID).Dur("elapsed", elapsed).Msg("Deployed AI application")
 
+	app, err := s.catalog.Get(ctx, req.AppID)
+	if err != nil {
+		return nil, err
+	}
+	serving, err := s.OpenServingPort(ctx, nsID, app, created)
+	if err != nil {
+		return nil, err
+	}
+
 	return &model.DeploymentResult{
 		Plan:    plan,
 		DryRun:  false,
 		Review:  review,
 		Infra:   created,
+		Serving: serving,
 		Message: fmt.Sprintf("%s deployed (%s)", req.InfraName, elapsed),
 	}, nil
 }

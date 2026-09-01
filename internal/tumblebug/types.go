@@ -84,6 +84,9 @@ type NodeInfo struct {
 	SSHPort     int    `json:"sshPort"`
 	SpecID      string `json:"specId"`
 	ImageID     string `json:"imageId"`
+	// SecurityGroupIDs are the groups attached to the node, and are how the
+	// serving port is opened after provisioning.
+	SecurityGroupIDs []string `json:"securityGroupIds"`
 }
 
 // InfraStatusView is the status view of an Infra.

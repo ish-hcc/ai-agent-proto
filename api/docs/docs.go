@@ -1052,6 +1052,14 @@ const docTemplate = `{
                             "$ref": "#/definitions/model.ReviewSummary"
                         }
                     ]
+                },
+                "serving": {
+                    "description": "Serving reports whether the application's port was opened, on a real run.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/model.ServingAccess"
+                        }
+                    ]
                 }
             }
         },
@@ -1201,6 +1209,41 @@ const docTemplate = `{
                 "RuntimeTGI",
                 "RuntimeOllama"
             ]
+        },
+        "model.ServingAccess": {
+            "type": "object",
+            "properties": {
+                "endpoints": {
+                    "description": "Endpoints are the reachable addresses, one per node with a public address.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "opened": {
+                    "description": "Opened is false when the rule could not be added; Message says why.",
+                    "type": "boolean"
+                },
+                "port": {
+                    "type": "integer"
+                },
+                "protocol": {
+                    "type": "string"
+                },
+                "securityGroupIds": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "sourceIp": {
+                    "description": "SourceIP is the range the port was opened to.",
+                    "type": "string"
+                }
+            }
         },
         "model.ServingSpec": {
             "type": "object",
@@ -1419,6 +1462,13 @@ const docTemplate = `{
                 },
                 "publicIP": {
                     "type": "string"
+                },
+                "securityGroupIds": {
+                    "description": "SecurityGroupIDs are the groups attached to the node, and are how the\nserving port is opened after provisioning.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 },
                 "specId": {
                     "type": "string"

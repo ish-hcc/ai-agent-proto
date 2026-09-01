@@ -55,6 +55,24 @@ type DeploymentPlan struct {
 	Request any `json:"request"`
 }
 
+// ServingAccess reports whether the application's serving port can be reached.
+//
+// Provisioning opens SSH only, so this is what turns a running node into a
+// usable endpoint. It is part of the result rather than a side effect so that a
+// caller learns immediately when the port stayed closed.
+type ServingAccess struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	// Opened is false when the rule could not be added; Message says why.
+	Opened bool `json:"opened"`
+	// SourceIP is the range the port was opened to.
+	SourceIP         string   `json:"sourceIp,omitempty"`
+	SecurityGroupIDs []string `json:"securityGroupIds,omitempty"`
+	// Endpoints are the reachable addresses, one per node with a public address.
+	Endpoints []string `json:"endpoints,omitempty"`
+	Message   string   `json:"message"`
+}
+
 // DeploymentResult reports the outcome of a deployment attempt.
 type DeploymentResult struct {
 	Plan *DeploymentPlan `json:"plan"`
@@ -64,6 +82,8 @@ type DeploymentResult struct {
 	Review *ReviewSummary `json:"review,omitempty"`
 	// Infra is the provisioned Infra, present only on a real run.
 	Infra any `json:"infra,omitempty"`
+	// Serving reports whether the application's port was opened, on a real run.
+	Serving *ServingAccess `json:"serving,omitempty"`
 	// Message explains the outcome to the caller.
 	Message string `json:"message"`
 }
