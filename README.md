@@ -257,7 +257,7 @@ run-dl3xxm60p7x7  intent   Llama 3.1 8B 추론 서버를 GPU 한 장짜리 노�
 | DELETE | `/aiapp/apps/{appId}` | AI 응용 삭제 |
 | GET | `/aiapp/apps/{appId}/specs` | 가속기 요구사항에 맞는 스펙 추천 |
 | POST | `/aiapp/ns/{nsId}/deployments/plan` | 배포 계획만 만듦 (클라우드 미접촉) |
-| POST | `/aiapp/ns/{nsId}/deployments` | 배포 (review 후, 게이트 통과 시 생성) |
+| POST | `/aiapp/ns/{nsId}/deployments` | 배포 (review 후, 게이트 통과 시 생성). `sgTemplateId` 로 보안그룹 템플릿 지정 가능 |
 | GET | `/aiapp/ns/{nsId}/deployments` | 배포 목록 |
 | GET | `/aiapp/ns/{nsId}/deployments/{infraId}/status` | 배포 상태 |
 | POST | `/aiapp/ns/{nsId}/deployments/{infraId}/control` | suspend / resume / reboot / terminate |
@@ -390,27 +390,50 @@ AI-MCMP-SERVING-OK          HTTP:200  time:0.335s
 
 Spider 로 본 CSP 규칙에 `inbound TCP 8000 - 8000 0.0.0.0/0` 이 들어가 있습니다.
 
-**다만 이 회차만으로는 규칙이 접속의 원인이라고 말할 수 없습니다.**
-같은 보안그룹에 기본 템플릿(`sg-default`)이 넣은 `inbound TCP 1-65535` 가 이미 있었습니다
-(6-3절). 확인된 것은 "규칙이 CSP 에 정확히 반영되고 엔드포인트가 응답한다"까지이고,
-"제한적인 템플릿에서 이 규칙이 있어야만 열린다"는 아직 실증하지 않았습니다.
+이 회차만으로는 규칙이 접속의 원인이라고 말할 수 없었습니다. 같은 보안그룹에 기본
+템플릿(`sg-default`)이 넣은 `inbound TCP 1-65535` 가 이미 있었기 때문입니다 (6-3절).
+그래서 아래 대조 실험을 따로 했습니다.
 
-### 10-5. 아직 확인 못 한 것
+### 10-5. 대조 실험 - 규칙이 원인인지 (제한 템플릿)
+
+`sgTemplateId: sg-usecase-web` 로 배포했습니다. 이 템플릿은 22, 80, 443, 8080, 8443, ICMP 만
+열고 **8000 은 열지 않습니다.** 응용은 8000(서빙 포트)과 8080(대조군)에 동시에 리스너를 띄웁니다.
+
+생성 직후 CSP 보안그룹 규칙 - 템플릿 규칙 + **프로토타입이 넣은 8000** 뿐이고 전체 개방이 없습니다.
+
+```
+inbound TCP 22   inbound TCP 80   inbound TCP 443
+inbound TCP 8080 inbound TCP 8443 inbound ICMP
+inbound TCP 8000      <- 프로토타입이 추가
+```
+
+같은 VM, 같은 리스너에서 **규칙만 넣었다 뺐다** 했습니다.
+
+| 단계 | 8000 (서빙 포트) | 8080 (대조군) |
+|---|---|---|
+| A. 규칙 있음 (배포 직후) | `AI-MCMP-PORT-8000` **HTTP 200** | `AI-MCMP-PORT-8080` HTTP 200 |
+| B. 8000 규칙만 삭제 | **HTTP 000 (접속 실패)** | `AI-MCMP-PORT-8080` HTTP 200 |
+| C. 8000 규칙 재추가 | `AI-MCMP-PORT-8000` **HTTP 200** | `AI-MCMP-PORT-8080` HTTP 200 |
+
+B 에서 8080 이 계속 살아 있으므로 VM 이나 리스너가 죽은 것이 아닙니다.
+**제한 템플릿에서는 이 규칙이 있어야만 서빙 포트가 열립니다.**
+
+### 10-6. 아직 확인 못 한 것
 
 | 항목 | 왜 |
 |---|---|
 | 자연어 intent 의 실제 Messages API 호출 | 이 환경에 API 키가 없음. 루프 자체는 스텁으로만 검증 |
-| 제한적 보안그룹 템플릿에서의 서빙 포트 개방 | `sg-default` 가 전부 열어 두어 대조가 안 됨 (10-4절) |
 | 컨테이너 배포 | 3차년도 항목 |
 | 다중 노드(`nodeCount` > 1) 배포 | 비용 때문에 1대로만 검증 |
 | AWS 외 CSP 에서의 생성 | 비용·시간 때문에 AWS 만 |
 
-### 10-6. 실증에서 나온 결함 둘을 더 고쳤습니다
+### 10-7. 실증에서 나온 결함 둘을 더 고쳤습니다
 
 **(1) 서빙 포트를 아무도 열지 않았습니다.**
 `serving.port` 가 검증에만 쓰이고 배포에는 안 쓰였습니다. `sg-default` 가 전부 열어 두는
 덕에 드러나지 않았을 뿐, 운영용 제한 템플릿으로 바꾸는 순간 배포는 성공을 보고하고
-엔드포인트만 죽습니다. 이제 노드의 보안그룹에 명시적으로 규칙을 넣고 결과에 엔드포인트를 담습니다 (6-3절).
+엔드포인트만 죽습니다. 10-5 의 대조 실험이 이것을 그대로 보여 줍니다.
+이제 노드의 보안그룹에 명시적으로 규칙을 넣고 결과에 엔드포인트를 담습니다 (6-3절).
 
 **(2) 가속기 벤더와 이미지 벤더를 대조하지 않았습니다.**
 `ResolveImage` 가 `isGPUImage=true` 만 보고 골라서, AMD GPU 인스턴스(`g4ad`)에
