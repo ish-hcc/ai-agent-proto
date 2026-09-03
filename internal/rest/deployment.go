@@ -138,6 +138,42 @@ func (h *Handler) RestGetDeploymentStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, status)
 }
 
+// RestGetDeploymentAccelerator godoc
+// @ID GetDeploymentAccelerator
+// @Summary Read the accelerator on a deployment
+// @Description Ask the deployed nodes what accelerator they carry and compare it against what the application asked for. Values the driver cannot report are left unknown rather than zero, and MIG state is reported because it decides what is observable at all
+// @Tags [Deploy] AI Application Deployment
+// @Produce json
+// @Param nsId path string true "Namespace ID" default(default)
+// @Param infraId path string true "Deployment ID"
+// @Param appId query string false "Registered application to compare against"
+// @Success 200 {object} model.AcceleratorReport "Accelerator report"
+// @Failure 404 {object} model.SimpleMsg "Deployment or application not found"
+// @Failure 500 {object} model.SimpleMsg "Accelerator probe failed"
+// @Router /ns/{nsId}/deployments/{infraId}/accelerator [get]
+func (h *Handler) RestGetDeploymentAccelerator(c echo.Context) error {
+	ctx := c.Request().Context()
+	nsID := c.Param("nsId")
+	infraID := c.Param("infraId")
+
+	var app *model.AppSpec
+	if appID := c.QueryParam("appId"); appID != "" {
+		found, err := h.catalog.Get(ctx, appID)
+		if err != nil {
+			log.Warn().Err(err).Str("appId", appID).Msg("Failed to get AI application")
+			return c.JSON(statusCodeFor(err), model.SimpleMsg{Message: "AI application not found"})
+		}
+		app = found
+	}
+
+	report, err := h.deploy.ProbeAccelerator(ctx, nsID, infraID, app)
+	if err != nil {
+		log.Error().Err(err).Str("nsId", nsID).Str("infraId", infraID).Msg("Failed to probe accelerator")
+		return c.JSON(statusCodeFor(err), model.SimpleMsg{Message: "Accelerator probe failed"})
+	}
+	return c.JSON(http.StatusOK, report)
+}
+
 // RestPostDeploymentControl godoc
 // @ID PostDeploymentControl
 // @Summary Control a deployment

@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // DeployAppReq asks for an AI application to be placed on an AI semiconductor node.
 type DeployAppReq struct {
@@ -78,6 +81,61 @@ type ServingAccess struct {
 	Message   string   `json:"message"`
 }
 
+// AcceleratorDevice is one accelerator as the driver on the node reports it.
+//
+// Fields the driver could not report are left empty and paired with a Known flag
+// rather than filled with zero, because zero reads as a measurement.
+type AcceleratorDevice struct {
+	NodeID string `json:"nodeId"`
+	Index  int    `json:"index"`
+	// UUID keeps the vendor prefix the driver prints. Stripping it splits one
+	// card into two identities wherever the prefixed form is used as a join key.
+	UUID          string `json:"uuid,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Vendor        string `json:"vendor,omitempty"`
+	MemoryMiB     int    `json:"memoryMiB,omitempty"`
+	MemoryKnown   bool   `json:"memoryKnown"`
+	DriverVersion string `json:"driverVersion,omitempty"`
+	MIGEnabled    bool   `json:"migEnabled"`
+	MIGKnown      bool   `json:"migKnown"`
+}
+
+// Label names a device for a message an operator reads.
+func (d *AcceleratorDevice) Label() string {
+	name := d.Name
+	if name == "" {
+		name = "accelerator"
+	}
+	if d.NodeID == "" {
+		return fmt.Sprintf("%s #%d", name, d.Index)
+	}
+	return fmt.Sprintf("%s %s #%d", d.NodeID, name, d.Index)
+}
+
+// AcceleratorExpectation is what the catalog entry asked for.
+type AcceleratorExpectation struct {
+	Type         string  `json:"type,omitempty"`
+	Model        string  `json:"model,omitempty"`
+	MinCount     int     `json:"minCount,omitempty"`
+	MinMemoryGiB float64 `json:"minMemoryGiB,omitempty"`
+}
+
+// AcceleratorReport is what the deployed nodes answered, next to what was asked.
+type AcceleratorReport struct {
+	InfraID string `json:"infraId"`
+	// Probed is false when the nodes were never asked.
+	Probed bool `json:"probed"`
+	// Mode is mig, bare_metal or unknown. Passthrough and bare metal look the
+	// same from inside a guest and are not split here.
+	Mode     string                 `json:"mode"`
+	Devices  []AcceleratorDevice    `json:"devices"`
+	Expected AcceleratorExpectation `json:"expected,omitempty"`
+	// Findings are the disagreements between the two. They are reported, not
+	// raised as errors: the nodes are already running either way.
+	Findings []string `json:"findings"`
+	Message  string   `json:"message"`
+}
+
 // DeploymentResult reports the outcome of a deployment attempt.
 type DeploymentResult struct {
 	Plan *DeploymentPlan `json:"plan"`
@@ -89,6 +147,8 @@ type DeploymentResult struct {
 	Infra any `json:"infra,omitempty"`
 	// Serving reports whether the application's port was opened, on a real run.
 	Serving *ServingAccess `json:"serving,omitempty"`
+	// Accelerator reports what the nodes answered when asked what they carry.
+	Accelerator *AcceleratorReport `json:"accelerator,omitempty"`
 	// Message explains the outcome to the caller.
 	Message string `json:"message"`
 }

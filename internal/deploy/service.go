@@ -238,13 +238,29 @@ func (s *Service) Deploy(ctx context.Context, nsID string, req *model.DeployAppR
 		return nil, err
 	}
 
+	// The nodes are up either way, so a probe that cannot answer is reported as
+	// not probed rather than turned into a failed deployment.
+	accelerator, err := s.ProbeAccelerator(ctx, nsID, created.ID, app)
+	if err != nil {
+		log.Warn().Err(err).Str("nsId", nsID).Str("infraId", created.ID).
+			Msg("Could not read the accelerator on the deployed nodes")
+		accelerator = &model.AcceleratorReport{
+			InfraID:  created.ID,
+			Mode:     "unknown",
+			Devices:  []model.AcceleratorDevice{},
+			Findings: []string{},
+			Message:  "The accelerator could not be read on the deployed nodes",
+		}
+	}
+
 	return &model.DeploymentResult{
-		Plan:    plan,
-		DryRun:  false,
-		Review:  review,
-		Infra:   created,
-		Serving: serving,
-		Message: fmt.Sprintf("%s deployed (%s)", req.InfraName, elapsed),
+		Plan:        plan,
+		DryRun:      false,
+		Review:      review,
+		Infra:       created,
+		Serving:     serving,
+		Accelerator: accelerator,
+		Message:     fmt.Sprintf("%s deployed (%s)", req.InfraName, elapsed),
 	}, nil
 }
 

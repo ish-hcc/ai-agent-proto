@@ -86,9 +86,20 @@ func (s *Service) ResolveImage(ctx context.Context, app *model.AppSpec, specID s
 			continue
 		}
 		imageVendor := vendorOf(image.OSDistribution, image.Name, image.ID)
-		if vendor == vendorUnknown || imageVendor == vendor {
+		if imageVendor == vendor {
 			choice := s.chose(app, specID, image, "accelerator image: ships the vendor driver")
 			choice.Vendor = string(vendor)
+			return choice, nil
+		}
+		if vendor == vendorUnknown {
+			// The spec names no vendor. That happens when its accelerator model
+			// is a vGPU profile identifier ("VGPU8-2G") rather than a device
+			// name, and no rule can recover the vendor from it. Taking the image
+			// is still the better bet than a plain one, but the pick was not
+			// checked and the reason says so instead of implying it was.
+			choice := s.chose(app, specID, image, "accelerator image, but the spec names no accelerator vendor "+
+				"so the image vendor was not checked; confirm the driver bound before serving")
+			choice.Vendor = string(imageVendor)
 			return choice, nil
 		}
 	}

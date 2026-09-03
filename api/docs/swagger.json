@@ -542,6 +542,62 @@
                 }
             }
         },
+        "/ns/{nsId}/deployments/{infraId}/accelerator": {
+            "get": {
+                "description": "Ask the deployed nodes what accelerator they carry and compare it against what the application asked for. Values the driver cannot report are left unknown rather than zero, and MIG state is reported because it decides what is observable at all",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "[Deploy] AI Application Deployment"
+                ],
+                "summary": "Read the accelerator on a deployment",
+                "operationId": "GetDeploymentAccelerator",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "default": "default",
+                        "description": "Namespace ID",
+                        "name": "nsId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Deployment ID",
+                        "name": "infraId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Registered application to compare against",
+                        "name": "appId",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Accelerator report",
+                        "schema": {
+                            "$ref": "#/definitions/model.AcceleratorReport"
+                        }
+                    },
+                    "404": {
+                        "description": "Deployment or application not found",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    },
+                    "500": {
+                        "description": "Accelerator probe failed",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    }
+                }
+            }
+        },
         "/ns/{nsId}/deployments/{infraId}/control": {
             "post": {
                 "description": "Apply suspend, resume, reboot or terminate to every node. terminate stops the nodes but keeps the records, so delete afterwards to stop billing",
@@ -796,6 +852,94 @@
                 "score": {
                     "description": "Score is comparable only within one Resolve call. It ranks candidates; it\nis not a probability and must not be compared across queries.",
                     "type": "integer"
+                }
+            }
+        },
+        "model.AcceleratorDevice": {
+            "type": "object",
+            "properties": {
+                "driverVersion": {
+                    "type": "string"
+                },
+                "index": {
+                    "type": "integer"
+                },
+                "memoryKnown": {
+                    "type": "boolean"
+                },
+                "memoryMiB": {
+                    "type": "integer"
+                },
+                "migEnabled": {
+                    "type": "boolean"
+                },
+                "migKnown": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "nodeId": {
+                    "type": "string"
+                },
+                "uuid": {
+                    "description": "UUID keeps the vendor prefix the driver prints. Stripping it splits one\ncard into two identities wherever the prefixed form is used as a join key.",
+                    "type": "string"
+                },
+                "vendor": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.AcceleratorExpectation": {
+            "type": "object",
+            "properties": {
+                "minCount": {
+                    "type": "integer"
+                },
+                "minMemoryGiB": {
+                    "type": "number"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "model.AcceleratorReport": {
+            "type": "object",
+            "properties": {
+                "devices": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/model.AcceleratorDevice"
+                    }
+                },
+                "expected": {
+                    "$ref": "#/definitions/model.AcceleratorExpectation"
+                },
+                "findings": {
+                    "description": "Findings are the disagreements between the two. They are reported, not\nraised as errors: the nodes are already running either way.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "infraId": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "mode": {
+                    "description": "Mode is mig, bare_metal or unknown. Passthrough and bare metal look the\nsame from inside a guest and are not split here.",
+                    "type": "string"
+                },
+                "probed": {
+                    "description": "Probed is false when the nodes were never asked.",
+                    "type": "boolean"
                 }
             }
         },
@@ -1116,6 +1260,14 @@
         "model.DeploymentResult": {
             "type": "object",
             "properties": {
+                "accelerator": {
+                    "description": "Accelerator reports what the nodes answered when asked what they carry.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/model.AcceleratorReport"
+                        }
+                    ]
+                },
                 "dryRun": {
                     "description": "DryRun is true when the plan was archived but never sent.",
                     "type": "boolean"

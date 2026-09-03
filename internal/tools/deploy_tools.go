@@ -31,6 +31,7 @@ func Register(registry *Registry, apps *catalog.Store, service *deploy.Service) 
 	registry.Add(resolveImageTool(apps, service))
 	registry.Add(listDeploymentsTool(service))
 	registry.Add(deploymentStatusTool(service))
+	registry.Add(probeAcceleratorTool(apps, service))
 	registry.Add(planDeploymentTool(service))
 	registry.Add(reviewDeploymentTool(service))
 	registry.Add(deployTool(service))
@@ -190,6 +191,39 @@ func deploymentStatusTool(service *deploy.Service) Tool {
 				return nil, err
 			}
 			return service.Status(ctx, nsID, args.InfraID)
+		},
+	}
+}
+
+func probeAcceleratorTool(apps *catalog.Store, service *deploy.Service) Tool {
+	return Tool{
+		Name:  "probe_accelerator",
+		Grade: GradeRead,
+		Description: "Ask the deployed nodes what accelerator they actually carry and compare it against what " +
+			"the application asked for. Reports the device name, memory, driver version and MIG state, and " +
+			"lists where the node and the catalog disagree. Use it when a deployment looks healthy but the " +
+			"application is not using the accelerator.",
+		InputSchema: object(map[string]any{
+			"infraId": stringProp("Identifier of the deployment"),
+			"appId":   stringProp("Registered application to compare against. Optional"),
+		}, "infraId"),
+		Handle: func(ctx context.Context, nsID string, input json.RawMessage) (any, error) {
+			var args struct {
+				InfraID string `json:"infraId"`
+				AppID   string `json:"appId"`
+			}
+			if err := decode(input, &args); err != nil {
+				return nil, err
+			}
+			var app *model.AppSpec
+			if args.AppID != "" {
+				found, err := apps.Get(ctx, args.AppID)
+				if err != nil {
+					return nil, err
+				}
+				app = found
+			}
+			return service.ProbeAccelerator(ctx, nsID, args.InfraID, app)
 		},
 	}
 }
