@@ -145,6 +145,9 @@ AppSpec.resources
                                           |
                         POST /ns/{ns}/resources/securityGroup/{sg}/rules
                         serving.port 인바운드 개방
+                                          |
+                        POST /ns/{ns}/cmd/infra/{infra}
+                        nvidia-smi 로 실제 가속기 판독 -> 카탈로그 약속과 대조
                                           v
                         http://<publicIP>:8000/health
 ```
@@ -168,7 +171,7 @@ AppSpec.resources
 
 | 등급 | 도구 | dry-run 게이트 |
 |---|---|---|
-| `read` | `list_ai_apps`, `get_ai_app`, `recommend_accelerator_spec`, `resolve_node_image`, `plan_deployment`, `list_deployments`, `get_deployment_status` | 해당 없음. 항상 실행 |
+| `read` | `list_ai_apps`, `find_ai_apps`, `get_ai_app`, `recommend_accelerator_spec`, `resolve_node_image`, `plan_deployment`, `list_deployments`, `get_deployment_status`, `probe_accelerator` | 해당 없음. 항상 실행 |
 | `review` | `review_deployment` | 해당 없음. 아무것도 안 만듦 |
 | `write` | `deploy_ai_app`, `control_deployment` | **걸림** |
 | `destructive` | `delete_deployment` | **걸림** |
@@ -180,7 +183,26 @@ LLM 이 "확실하니 실행하자"고 해도 `deploy_ai_app` 은 계획과 revi
 시스템 프롬프트에는 게이트가 켜져 있다고 알려 주는데, 이것은 **지키라고 부탁하는 게 아니라**
 운영자에게 "다 했습니다"라고 잘못 보고하지 않게 하려는 것입니다. 강제는 도구 계층에서 합니다.
 
-### 6-3. 서빙 포트는 배포가 열어 준다
+### 6-3. 어느 AI 응용인지는 규칙이 먼저 좁힌다
+
+`"라마 추론서버 올려줘"` 가 카탈로그의 어느 항목인지를 정하는 일은 원래 계획 모델에게
+전부 맡겨져 있었습니다. 전체 AppSpec 을 통째로 보여주고 고르게 하는 방식인데,
+**측정할 수 없고 회귀를 잡을 수 없습니다.**
+
+지금은 규칙 기반 매처(`internal/catalog/resolve.go`)가 순위를 매겨 후보를 넘깁니다.
+모델이 여전히 고르지만, 고를 대상이 좁혀지고 근거가 붙습니다.
+
+- **구조화된 필드에 걸려야 후보가 됩니다.** id·별칭·모델명·런타임·포맷이 그것입니다.
+  설명문 단어는 동점을 가르는 데만 쓰이고 혼자서는 후보를 만들지 못합니다.
+  흔한 단어 하나로 확신에 찬 오답을 내는 것보다 "없다" 가 낫습니다.
+- **별칭은 토큰이거나 단어 시작에서만 맞습니다.** 띄어쓰기 없이 쓰는 한국어(`라마모델`)를
+  받으면서도 `ollama` 가 `llama` 별칭에 걸리지 않게 하는 선입니다.
+- 후보가 없으면 빈 목록을 돌려주고, 시스템 프롬프트가 **가장 비슷한 것을 배포하지 말고
+  없다고 답하라**고 지시합니다.
+
+이것은 6-2 의 "실행 여부를 LLM 이 정하지 않는다" 를 대상 선정 단계에 적용한 것입니다.
+
+### 6-4. 서빙 포트는 배포가 열어 준다
 
 CB-Tumblebug 의 기본 보안그룹 템플릿 `sg-default` 는 **TCP/UDP 1-65535 를 전부 엽니다.**
 템플릿 설명이 스스로 "development/testing use. For production, use a more restrictive
@@ -200,7 +222,27 @@ template" 이라고 적어 두었습니다. 즉 **기본값에서는 서빙 포�
 현재 소스 범위는 `0.0.0.0/0` 입니다. 카탈로그 항목만으로는 호출자를 좁힐 근거가 없어서
 접근 정책 항목으로 미루되, 열린 범위를 응답에 명시합니다.
 
-### 6-4. 멱등성
+### 6-5. 배포 성공과 가속기 사용 가능은 다른 상태다
+
+노드가 `Running` 이라고 가속기가 쓸 수 있다는 뜻이 아닙니다. 벤더가 안 맞는 이미지를 붙이면
+부팅은 되고 드라이버는 안 붙습니다. 스펙이 약속한 개수·메모리와 실제가 다를 수도 있습니다.
+전부 **응용이 장치를 처음 만질 때가 되어서야** 드러납니다.
+
+그래서 배포 직후 노드에 물어보고 카탈로그의 약속과 대조합니다
+(`internal/deploy/accelerator.go`). 판독 규칙은 사내 GPU 수집 구현에서 가져왔습니다
+([`../ai-agent-research/08-gpu-telemetry-lessons.md`](../ai-agent-research/08-gpu-telemetry-lessons.md)).
+
+- **드라이버가 `N/A` 로 답한 값은 0 으로 적지 않습니다.** 0 은 측정값으로 읽힙니다.
+  `memoryKnown` 같은 플래그로 "모른다" 와 "0 이라고 답했다" 를 가릅니다.
+- **UUID 의 `GPU-` 접두사를 떼지 않습니다.** 떼면 한 카드가 두 개의 신원으로 갈라집니다.
+- **`mig.mode.current` 를 읽습니다.** MIG 가 켜지면 드라이버가 장치 단위 사용률 카운터를 끄기
+  때문에, 이걸 모르면 **놀고 있는 카드와 카운터가 꺼진 카드를 구분할 수 없습니다.**
+
+**대조 결과는 findings 이지 에러가 아닙니다.** 노드는 이미 떠서 과금 중이므로,
+배포를 무르는 것보다 무엇이 다른지 알려 주는 편이 낫습니다.
+프로브가 아예 답하지 못해도 배포는 그대로 둡니다.
+
+### 6-6. 멱등성
 
 배포 이름(`infraName`)이 키입니다. 생성 전에 네임스페이스의 Infra 목록을 조회해
 같은 이름이 있으면 409 로 거부합니다. 에이전트가 재시도해도 두 번 과금되지 않습니다.
@@ -209,7 +251,7 @@ template" 이라고 적어 두었습니다. 즉 **기본값에서는 서빙 포�
 > `"The infra <id> does not exist."` 를 돌려줍니다 (2026-09-01 실측). 단건 조회로는
 > "없음"과 "상류 장애"를 구분할 수 없습니다.
 
-### 6-5. review 를 항상 먼저 한다
+### 6-7. review 를 항상 먼저 한다
 
 `deploy_ai_app` 은 내부적으로 `plan -> 중복확인 -> review -> (게이트) -> create` 순서가 고정입니다.
 review 는 아무것도 안 만들고 `creationViable` 과 시간당 비용을 돌려줍니다.
@@ -253,6 +295,7 @@ run-dl3xxm60p7x7  intent   Llama 3.1 8B 추론 서버를 GPU 한 장짜리 노�
 | GET | `/aiapp/readyz` | 준비 상태 |
 | GET | `/aiapp/apps` | 등록된 AI 응용 목록 |
 | POST | `/aiapp/apps` | AI 응용 등록 (같은 id 면 새 버전으로 교체) |
+| GET | `/aiapp/apps/search?q=` | **자연어로 AI 응용 후보 순위 조회** (근거 신호 포함) |
 | GET | `/aiapp/apps/{appId}` | AI 응용 조회 |
 | DELETE | `/aiapp/apps/{appId}` | AI 응용 삭제 |
 | GET | `/aiapp/apps/{appId}/specs` | 가속기 요구사항에 맞는 스펙 추천 |
@@ -260,6 +303,7 @@ run-dl3xxm60p7x7  intent   Llama 3.1 8B 추론 서버를 GPU 한 장짜리 노�
 | POST | `/aiapp/ns/{nsId}/deployments` | 배포 (review 후, 게이트 통과 시 생성). `sgTemplateId` 로 보안그룹 템플릿 지정 가능 |
 | GET | `/aiapp/ns/{nsId}/deployments` | 배포 목록 |
 | GET | `/aiapp/ns/{nsId}/deployments/{infraId}/status` | 배포 상태 |
+| GET | `/aiapp/ns/{nsId}/deployments/{infraId}/accelerator` | **노드의 실제 가속기 조회 + 카탈로그 약속과 대조** |
 | POST | `/aiapp/ns/{nsId}/deployments/{infraId}/control` | suspend / resume / reboot / terminate |
 | DELETE | `/aiapp/ns/{nsId}/deployments/{infraId}` | 배포 삭제 |
 | POST | `/aiapp/ns/{nsId}/intents` | **자연어 지시 -> 에이전트 실행** |
@@ -418,16 +462,40 @@ inbound TCP 8000      <- 프로토타입이 추가
 B 에서 8080 이 계속 살아 있으므로 VM 이나 리스너가 죽은 것이 아닙니다.
 **제한 템플릿에서는 이 규칙이 있어야만 서빙 포트가 열립니다.**
 
-### 10-6. 아직 확인 못 한 것
+### 10-6. AI 응용 판별 정확도 (2026-09-03)
+
+운영자가 쓰는 말로 지시 19건을 만들어 top-1 정확도를 쟀습니다
+(`internal/catalog/resolve_test.go`). 등록 id, 영문 모델명, 한국어 음차, 런타임명,
+기능 표현, 그리고 **등록된 적 없는 모델 요청**을 섞었습니다.
+
+| | top-1 정확도 |
+|---|---|
+| 이전 (id·이름 부분 문자열) | **3 / 19** |
+| 지금 (규칙 매처) | **19 / 19** |
+
+`list_ai_apps` 응답도 전체 스펙에서 요약으로 바꿨습니다. 앱 3개 기준 2,568 -> 949 bytes (64% 감소).
+빠진 것은 대부분 `install.commands` 로, 어느 응용인지 고르는 데 쓰이지 않습니다.
+
+**이 숫자는 규칙 매처의 정확도이지 에이전트 전체의 정확도가 아닙니다.**
+최종 선택은 여전히 LLM 이 하고, 이 환경에 API 키가 없어 그 부분은 재지 못했습니다.
+측정 대상은 "LLM 에게 무엇을 보여주는가" 까지입니다.
+
+지시 세트를 만들면서 매처를 같이 손봤으므로 **과적합 위험이 있습니다.**
+그래서 절대 수치보다 기준선 대비 차이를 같이 적었고, 판정 근거(`alias:라마`)를 응답에 실어
+왜 그렇게 골랐는지 사람이 확인할 수 있게 했습니다.
+
+### 10-7. 아직 확인 못 한 것
 
 | 항목 | 왜 |
 |---|---|
 | 자연어 intent 의 실제 Messages API 호출 | 이 환경에 API 키가 없음. 루프 자체는 스텁으로만 검증 |
+| **가속기 프로브의 원격 실행** | 파서는 실측 출력으로 단위테스트했지만, `POST /ns/{ns}/cmd/infra` 왕복은 VM 없이 확인 못 함 |
+| **NVIDIA 외 가속기 판독** | 프로브가 `nvidia-smi` 전용. 국산 NPU 는 벤더별 프로브가 필요 |
 | 컨테이너 배포 | 3차년도 항목 |
 | 다중 노드(`nodeCount` > 1) 배포 | 비용 때문에 1대로만 검증 |
 | AWS 외 CSP 에서의 생성 | 비용·시간 때문에 AWS 만 |
 
-### 10-7. 실증에서 나온 결함 둘을 더 고쳤습니다
+### 10-8. 실증에서 나온 결함 둘을 더 고쳤습니다
 
 **(1) 서빙 포트를 아무도 열지 않았습니다.**
 `serving.port` 가 검증에만 쓰이고 배포에는 안 쓰였습니다. `sg-default` 가 전부 열어 두는
