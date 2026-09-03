@@ -79,6 +79,16 @@ func (s *Store) List(ctx context.Context) []model.AppSpec {
 	return specs
 }
 
+// Summaries reads the short form of every registered application, ordered by ID.
+func (s *Store) Summaries(ctx context.Context) []model.AppSummary {
+	specs := s.List(ctx)
+	out := make([]model.AppSummary, 0, len(specs))
+	for i := range specs {
+		out = append(out, specs[i].Summary())
+	}
+	return out
+}
+
 // Delete removes one application spec.
 func (s *Store) Delete(ctx context.Context, appID string) error {
 	s.mu.Lock()

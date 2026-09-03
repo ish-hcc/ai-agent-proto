@@ -79,6 +79,52 @@ const docTemplate = `{
                 }
             }
         },
+        "/apps/search": {
+            "get": {
+                "description": "Rank registered AI applications against an operator's own words and report the signals that matched. An empty list means the catalog holds nothing that fits",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "[App] AI Application Catalog"
+                ],
+                "summary": "Find AI applications matching a description",
+                "operationId": "GetAppMatches",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "The operator's instruction, in their own words",
+                        "name": "q",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "How many candidates to return",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Ranked candidates",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/catalog.Match"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Query required",
+                        "schema": {
+                            "$ref": "#/definitions/model.SimpleMsg"
+                        }
+                    }
+                }
+            }
+        },
         "/apps/{appId}": {
             "get": {
                 "description": "Read one registered AI application, including its install commands and serving port",
@@ -732,6 +778,34 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "catalog.Match": {
+            "type": "object",
+            "properties": {
+                "appId": {
+                    "type": "string"
+                },
+                "modelId": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "reasons": {
+                    "description": "Reasons names the signals that matched, so an operator can see why a\ncandidate came up rather than being handed an unexplained ranking.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "runtime": {
+                    "type": "string"
+                },
+                "score": {
+                    "description": "Score is comparable only within one Resolve call. It ranks candidates; it\nis not a probability and must not be compared across queries.",
+                    "type": "integer"
+                }
+            }
+        },
         "model.AcceleratorRequirement": {
             "type": "object",
             "required": [
@@ -776,6 +850,16 @@ const docTemplate = `{
             "properties": {
                 "accelerator": {
                     "$ref": "#/definitions/model.AcceleratorRequirement"
+                },
+                "aliases": {
+                    "description": "Aliases are the other names an operator uses for this application, in any\nlanguage. They exist because an instruction arrives as \"라마 추론서버\", not\nas the registered id, and nothing else in the record carries that word.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "llama"
+                    ]
                 },
                 "deployTargets": {
                     "type": "array",

@@ -55,6 +55,7 @@ func NewServer(cfg *config.Config, deps Dependencies) *Server {
 	// AI application catalog: the metadata specification, as a live surface.
 	g.GET("/apps", handler.RestGetAllApps)
 	g.POST("/apps", handler.RestPostApp)
+	g.GET("/apps/search", handler.RestGetAppMatches)
 	g.GET("/apps/:appId", handler.RestGetApp)
 	g.DELETE("/apps/:appId", handler.RestDeleteApp)
 	g.GET("/apps/:appId/specs", handler.RestGetAppSpecs)

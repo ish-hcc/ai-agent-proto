@@ -25,6 +25,7 @@ var allowedActions = map[string]bool{
 // Register adds every deployment tool to the registry.
 func Register(registry *Registry, apps *catalog.Store, service *deploy.Service) {
 	registry.Add(listAppsTool(apps))
+	registry.Add(findAppsTool(apps))
 	registry.Add(getAppTool(apps))
 	registry.Add(recommendSpecTool(apps, service))
 	registry.Add(resolveImageTool(apps, service))
@@ -41,11 +42,39 @@ func listAppsTool(apps *catalog.Store) Tool {
 	return Tool{
 		Name:  "list_ai_apps",
 		Grade: GradeRead,
-		Description: "List every registered AI application with its runtime, model and accelerator requirement. " +
-			"Start here when the operator names an application in words rather than by id.",
+		Description: "List every registered AI application in short form: id, runtime, model, accelerator " +
+			"requirement and serving port. Use it to see what the catalog holds. " +
+			"When the operator described an application in words, call find_ai_apps instead.",
 		InputSchema: object(map[string]any{}),
 		Handle: func(ctx context.Context, nsID string, input json.RawMessage) (any, error) {
-			return model.AppSpecListResp{Apps: apps.List(ctx)}, nil
+			return model.AppSummaryListResp{Apps: apps.Summaries(ctx)}, nil
+		},
+	}
+}
+
+func findAppsTool(apps *catalog.Store) Tool {
+	return Tool{
+		Name:  "find_ai_apps",
+		Grade: GradeRead,
+		Description: "Rank registered AI applications against the operator's own words and return the best " +
+			"candidates with the signals that matched. An empty result means the catalog holds nothing " +
+			"that fits, which is an answer: say so rather than deploying the closest entry.",
+		InputSchema: object(map[string]any{
+			"query": stringProp("The operator's instruction, in their own words"),
+			"limit": integerProp("How many candidates to return. Defaults to 5"),
+		}, "query"),
+		Handle: func(ctx context.Context, nsID string, input json.RawMessage) (any, error) {
+			var args struct {
+				Query string `json:"query"`
+				Limit int    `json:"limit"`
+			}
+			if err := decode(input, &args); err != nil {
+				return nil, err
+			}
+			if args.Query == "" {
+				return nil, fmt.Errorf("query required")
+			}
+			return map[string]any{"candidates": apps.Resolve(ctx, args.Query, args.Limit)}, nil
 		},
 	}
 }

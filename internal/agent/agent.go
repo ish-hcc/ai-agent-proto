@@ -197,7 +197,10 @@ func (s *Service) systemPrompt(nsID string) string {
 		"across heterogeneous clouds, by calling the tools you are given.\n\n" +
 		"Namespace for this run: " + nsID + ". Tools already operate in it, so never ask for it.\n\n" +
 		"How to work:\n" +
-		"- Resolve the application first. If the operator names it in words, list the applications and match it.\n" +
+		"- Resolve the application first. If the operator names it in words, call find_ai_apps with their own\n" +
+		"  wording and take the ranked candidates; do not scan the catalog yourself. No candidate means the\n" +
+		"  catalog holds nothing that fits, so say that instead of deploying the nearest entry. When two\n" +
+		"  candidates score close together, ask which one rather than guessing.\n" +
 		"- The accelerator requirement of the application drives spec selection. Recommend specs rather than guessing a spec id.\n" +
 		"- Review before you deploy. A review costs nothing and reports whether creation is viable and what it will cost per hour.\n" +
 		"- Pick a deployment name that reflects the application, and reuse it if the operator names one.\n" +

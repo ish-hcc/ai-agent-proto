@@ -1,5 +1,28 @@
 basePath: /aiapp
 definitions:
+  catalog.Match:
+    properties:
+      appId:
+        type: string
+      modelId:
+        type: string
+      name:
+        type: string
+      reasons:
+        description: |-
+          Reasons names the signals that matched, so an operator can see why a
+          candidate came up rather than being handed an unexplained ranking.
+        items:
+          type: string
+        type: array
+      runtime:
+        type: string
+      score:
+        description: |-
+          Score is comparable only within one Resolve call. It ranks candidates; it
+          is not a probability and must not be compared across queries.
+        type: integer
+    type: object
   model.AcceleratorRequirement:
     properties:
       minCount:
@@ -28,6 +51,16 @@ definitions:
     properties:
       accelerator:
         $ref: '#/definitions/model.AcceleratorRequirement'
+      aliases:
+        description: |-
+          Aliases are the other names an operator uses for this application, in any
+          language. They exist because an instruction arrives as "라마 추론서버", not
+          as the registered id, and nothing else in the record carries that word.
+        example:
+        - llama
+        items:
+          type: string
+        type: array
       deployTargets:
         items:
           $ref: '#/definitions/model.DeployTarget'
@@ -695,6 +728,39 @@ paths:
           schema:
             $ref: '#/definitions/model.SimpleMsg'
       summary: Recommend accelerator specs for an AI application
+      tags:
+      - '[App] AI Application Catalog'
+  /apps/search:
+    get:
+      description: Rank registered AI applications against an operator's own words
+        and report the signals that matched. An empty list means the catalog holds
+        nothing that fits
+      operationId: GetAppMatches
+      parameters:
+      - description: The operator's instruction, in their own words
+        in: query
+        name: q
+        required: true
+        type: string
+      - default: 5
+        description: How many candidates to return
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Ranked candidates
+          schema:
+            items:
+              $ref: '#/definitions/catalog.Match'
+            type: array
+        "400":
+          description: Query required
+          schema:
+            $ref: '#/definitions/model.SimpleMsg'
+      summary: Find AI applications matching a description
       tags:
       - '[App] AI Application Catalog'
   /archive:

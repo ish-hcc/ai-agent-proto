@@ -61,6 +61,7 @@ func builtinApps() []model.AppSpec {
 				},
 			},
 			DeployTarget: []model.DeployTarget{model.DeployTargetVM},
+			Aliases:      []string{"llama", "llama3", "llama3.1", "라마", "라마3", "vllm", "openai"},
 			Labels:       map[string]string{"framework": "ai-mcmp", "kind": "ai-app"},
 		},
 		{
@@ -96,6 +97,7 @@ func builtinApps() []model.AppSpec {
 				},
 			},
 			DeployTarget: []model.DeployTarget{model.DeployTargetVM},
+			Aliases:      []string{"qwen", "qwen2.5", "큐원", "콰인", "ollama", "올라마", "경량"},
 			Labels:       map[string]string{"framework": "ai-mcmp", "kind": "ai-app"},
 		},
 		{
@@ -131,6 +133,7 @@ func builtinApps() []model.AppSpec {
 				},
 			},
 			DeployTarget: []model.DeployTarget{model.DeployTargetVM},
+			Aliases:      []string{"resnet", "resnet50", "triton", "트리톤", "레스넷", "vision", "비전", "이미지 분류", "분류"},
 			Labels:       map[string]string{"framework": "ai-mcmp", "kind": "ai-app"},
 		},
 	}

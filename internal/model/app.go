@@ -1,5 +1,7 @@
 package model
 
+import "fmt"
+
 // Runtime is the inference engine that serves an AI application.
 //
 // The engine and the accelerator are separate axes on purpose. A vendor NPU is
@@ -104,7 +106,11 @@ type AppSpec struct {
 	Serving      ServingSpec            `json:"serving" validate:"required"`
 	Install      InstallSpec            `json:"install" validate:"required"`
 	DeployTarget []DeployTarget         `json:"deployTargets,omitempty"`
-	Labels       map[string]string      `json:"labels,omitempty"`
+	// Aliases are the other names an operator uses for this application, in any
+	// language. They exist because an instruction arrives as "라마 추론서버", not
+	// as the registered id, and nothing else in the record carries that word.
+	Aliases []string          `json:"aliases,omitempty" example:"llama"`
+	Labels  map[string]string `json:"labels,omitempty"`
 }
 
 // Validate reports why an AppSpec cannot be registered.
@@ -139,4 +145,49 @@ func (a *AppSpec) Validate() error {
 // AppSpecListResp is the catalog listing body.
 type AppSpecListResp struct {
 	Apps []AppSpec `json:"apps"`
+}
+
+// AppSummary is the short form of a catalog entry.
+//
+// It carries what picking an application needs and leaves out what running one
+// needs. A planning model that is choosing between entries does not benefit from
+// every install command, and a catalog dump of them buries the fields that
+// actually separate one entry from another.
+type AppSummary struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	Description string   `json:"description,omitempty"`
+	Runtime     Runtime  `json:"runtime"`
+	ModelID     string   `json:"modelId"`
+	Accelerator string   `json:"accelerator"`
+	ServingPort int      `json:"servingPort"`
+	Aliases     []string `json:"aliases,omitempty"`
+}
+
+// Summary renders the short form of this entry.
+func (a *AppSpec) Summary() AppSummary {
+	accelerator := a.Accelerator.Type
+	if a.Accelerator.MinCount > 0 {
+		accelerator = fmt.Sprintf("%s x%d", accelerator, a.Accelerator.MinCount)
+	}
+	if a.Accelerator.MinMemoryGiB > 0 {
+		accelerator = fmt.Sprintf("%s, >=%gGiB", accelerator, a.Accelerator.MinMemoryGiB)
+	}
+	return AppSummary{
+		ID:          a.ID,
+		Name:        a.Name,
+		Version:     a.Version,
+		Description: a.Description,
+		Runtime:     a.Runtime,
+		ModelID:     a.Model.ID,
+		Accelerator: accelerator,
+		ServingPort: a.Serving.Port,
+		Aliases:     a.Aliases,
+	}
+}
+
+// AppSummaryListResp is the compact catalog listing body.
+type AppSummaryListResp struct {
+	Apps []AppSummary `json:"apps"`
 }

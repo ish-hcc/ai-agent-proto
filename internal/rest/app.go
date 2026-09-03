@@ -49,6 +49,31 @@ func (h *Handler) RestPostApp(c echo.Context) error {
 	return c.JSON(http.StatusOK, registered)
 }
 
+// RestGetAppMatches godoc
+// @ID GetAppMatches
+// @Summary Find AI applications matching a description
+// @Description Rank registered AI applications against an operator's own words and report the signals that matched. An empty list means the catalog holds nothing that fits
+// @Tags [App] AI Application Catalog
+// @Produce json
+// @Param q query string true "The operator's instruction, in their own words"
+// @Param limit query int false "How many candidates to return" default(5)
+// @Success 200 {array} catalog.Match "Ranked candidates"
+// @Failure 400 {object} model.SimpleMsg "Query required"
+// @Router /apps/search [get]
+func (h *Handler) RestGetAppMatches(c echo.Context) error {
+	ctx := c.Request().Context()
+
+	query := c.QueryParam("q")
+	if query == "" {
+		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "Query required"})
+	}
+	limit, err := intQueryParam(c, "limit")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, model.SimpleMsg{Message: "Limit must be a whole number"})
+	}
+	return c.JSON(http.StatusOK, h.catalog.Resolve(ctx, query, limit))
+}
+
 // RestGetApp godoc
 // @ID GetApp
 // @Summary Get an AI application
