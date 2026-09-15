@@ -40,6 +40,8 @@ review  : creationViable=true, "All VMs can be created successfully"
 | 3 | **런타임 축과 가속기 축을 분리** | 국산 NPU 는 vLLM 플러그인으로 붙음. 합치면 가속기 늘 때마다 규격이 깨짐 |
 | 4 | VM 생성과 응용 설치를 **한 호출로** | CB-Tumblebug `InfraDynamicReq.postCommands` 확인. 별도 SSH 채널 불필요 |
 | 5 | **쓰기는 기본적으로 실행 안 됨** (dry-run 기본 ON) | AWS MCP 도 쓰기를 안 열었고, CB-Tumblebug MCP 는 스스로 PoC 경고 |
+| 6 | **가속기 판독의 바닥을 PCI 버스로** | 벤더 도구는 드라이버가 붙어야 답하는데, 잡으려는 실패가 "드라이버가 안 붙음" 이다. 쿠버네티스 NFD 도 같은 방법을 쓴다 |
+| 7 | **설정 없이 기동** | 클라우드에 안 닿는 기능이 대부분인데, 설정 하나 없다고 그 전부를 못 쓰게 할 이유가 없다 |
 
 ## 3. 구조
 
@@ -58,6 +60,8 @@ POST /aiapp/ns/{ns}/intents      [ internal/agent ]
             [ internal/catalog ]  [ internal/deploy ]  [ internal/archive ]
              AI 응용 메타데이터    요구사항 -> 스펙/이미지   JSON Lines 레코드
                                   -> 배포 요청 조립
+                                  -> 가속기 프로브
+                                     (pci + 6종 벤더 도구)
                                        │
                                        v
                               [ internal/tumblebug ]
@@ -147,7 +151,8 @@ AppSpec.resources
                         serving.port 인바운드 개방
                                           |
                         POST /ns/{ns}/cmd/infra/{infra}
-                        nvidia-smi 로 실제 가속기 판독 -> 카탈로그 약속과 대조
+                        PCI 버스 재고 + 벤더 도구 6종 -> 카탈로그 약속과 대조
+                        (gpu / npu / tpu, 출처를 값마다 표기)
                                           v
                         http://<publicIP>:8000/health
 ```
@@ -229,18 +234,105 @@ template" 이라고 적어 두었습니다. 즉 **기본값에서는 서빙 포�
 전부 **응용이 장치를 처음 만질 때가 되어서야** 드러납니다.
 
 그래서 배포 직후 노드에 물어보고 카탈로그의 약속과 대조합니다
-(`internal/deploy/accelerator.go`). 판독 규칙은 사내 GPU 수집 구현에서 가져왔습니다
-([`../ai-agent-research/08-gpu-telemetry-lessons.md`](../ai-agent-research/08-gpu-telemetry-lessons.md)).
+(`internal/deploy/accelerator.go`).
+
+#### 벤더 도구가 바닥이면 안 된다
+
+처음에는 `nvidia-smi` 하나만 돌렸습니다. **그 구조가 틀렸습니다.**
+
+벤더 판독 도구는 전부 **드라이버가 이미 붙어야** 답합니다. 그런데 여기서 잡으려던 실패가 정확히
+**드라이버가 안 붙은 상태**입니다. 그 상태에서 벤더 도구는 **가속기가 없을 때와 똑같이 침묵**합니다.
+
+```
+이전:  findings = ["serving-1: no NVIDIA driver tool on the node, ..."]
+       ^ 카드 없는 노드 · 드라이버 안 붙은 노드 · AMD 카드 꽂힌 노드가 전부 이 한 줄
+```
+
+**지금은 PCI 버스가 바닥입니다** (`internal/deploy/acceleratorpci.go`).
+아무것도 설치돼 있지 않아도 답합니다.
+
+```
+   /sys/bus/pci/devices          <- 항상 실행. 설치 불필요
+      클래스 0x03(GPU) · 0x12(Processing accelerator) 만 채택
+      벤더 ID -> 이름 · 종류(gpu/npu/tpu) · 모델명
+            |
+            v
+     [ 장치 재고 ]  BDF · 커널 드라이버 · PF/VF
+            ^
+            |  BDF 로 조인 (도메인 자리수·대소문자 정규화)
+   nvidia-smi · rocm-smi · rbln-stat · furiosa-smi · hl-smi · tpu-info
+   있으면 메모리 · UUID · 드라이버 버전 · MIG 를 덧칠
+```
+
+**조인 방향이 요점입니다.** 벤더 목록을 바닥으로 삼으면 드라이버가 안 붙은 장치가 목록에서
+빠지는데, 그게 바로 잡으려던 장치입니다.
+
+이 방법은 지어낸 것이 아닙니다. **쿠버네티스 Node Feature Discovery 가 국산 NPU 를 판정하는
+방법이 같습니다** - Rebellions 는 `pci-1eff.present`, FuriosaAI 는 `pci-1200_1ed2.present`
+라벨입니다. `1200` 이 PCI 클래스 0x12, `1ed2` 가 벤더 ID 입니다.
+
+#### 노드에서 도는 것
+
+한 덩어리 셸이 섹션으로 나뉜 텍스트를 돌려주고, **파싱은 전부 Go 에서** 합니다
+(`internal/deploy/acceleratorprobe.go`). 셸은 모으기만 합니다 - 셸은 나쁜 파서입니다.
+
+```
+===AIAPP-PROBE pci===
+0000:01:00.0 0x030000 0x10de 0x2184 nvidia -
+===AIAPP-PROBE nvidia-smi===
+0, GPU-6f3a..., NVIDIA T4G, 15360, 595.71.05, N/A, 00000000:00:1E.0
+===AIAPP-PROBE rocm-smi===
+===AIAPP-PROBE rbln-stat===
+===AIAPP-PROBE furiosa-smi===
+===AIAPP-PROBE hl-smi===
+===AIAPP-PROBE tpu-info===
+===AIAPP-PROBE end===
+```
+
+**빈 섹션도 옵니다.** "도구가 없다" 와 "도구가 있는데 답이 없다" 를 가르기 위해서입니다.
+마커가 아예 없는 출력은 이전 프로브를 쓰는 노드로 보고 nvidia 출력으로 읽습니다.
+
+#### 판독 규칙
+
+앞의 셋은 유지, 넷째가 이번에 추가됐습니다.
 
 - **드라이버가 `N/A` 로 답한 값은 0 으로 적지 않습니다.** 0 은 측정값으로 읽힙니다.
   `memoryKnown` 같은 플래그로 "모른다" 와 "0 이라고 답했다" 를 가릅니다.
 - **UUID 의 `GPU-` 접두사를 떼지 않습니다.** 떼면 한 카드가 두 개의 신원으로 갈라집니다.
 - **`mig.mode.current` 를 읽습니다.** MIG 가 켜지면 드라이버가 장치 단위 사용률 카운터를 끄기
   때문에, 이걸 모르면 **놀고 있는 카드와 카운터가 꺼진 카드를 구분할 수 없습니다.**
+- **(신규) `source` 로 출처를 적습니다.** 버스에서 읽은 것과 드라이버가 답한 것은 진실의 무게가
+  다릅니다. 안 적고 합치면 **재고 목록이 측정값처럼 보입니다.**
+
+**SR-IOV 가상 함수를 가릅니다.** Rebellions PCI ID 가 `1220`(PF)/`1221`(VF) 쌍이라,
+안 가르면 가상화 호스트에서 **카드 한 장이 여러 장으로 보고됩니다.** 개수 대조는 PF 만 셉니다.
+
+#### 드라이버가 안 붙은 노드의 응답
+
+```json
+{ "sources": ["pci"],
+  "devices": [{ "kind": "npu", "vendor": "rebellions", "name": "RBLN-CA22",
+                "source": "pci", "pciBusId": "0000:51:00.0",
+                "kernelDriver": "", "memoryKnown": false }],
+  "findings": ["RBLN-CA22 #0 is on the bus with no kernel driver bound, so the node is
+                billing for a device nothing can use"] }
+```
+
+**이 한 줄이 이번 변경의 전부입니다.** 예전에는 이 노드와 가속기가 없는 노드가 구분되지 않았습니다.
 
 **대조 결과는 findings 이지 에러가 아닙니다.** 노드는 이미 떠서 과금 중이므로,
 배포를 무르는 것보다 무엇이 다른지 알려 주는 편이 낫습니다.
 프로브가 아예 답하지 못해도 배포는 그대로 둡니다.
+
+#### 어디까지 실측했나
+
+| 경로 | 상태 |
+|---|---|
+| PCI 인벤토리 파싱 | **로컬 `/sys/bus/pci/devices` 실제 출력으로 단위테스트** |
+| `nvidia-smi` 파서 | **실증 배포 출력으로 단위테스트** (NVIDIA T4G, 595.71.05) |
+| `rocm-smi` 파서 | 공개 문서 형식. **실기기 미검증** |
+| `rbln-stat`·`furiosa-smi`·`hl-smi`·`tpu-info` 파서 | 공개 문서 형식. **실기기 미검증 - 장비 없음** |
+| 원격 실행 왕복 | NVIDIA 노드에서만 실증. 다벤더 스크립트는 **미검증** |
 
 ### 6-6. 멱등성
 
@@ -313,23 +405,104 @@ run-dl3xxm60p7x7  intent   Llama 3.1 8B 추론 서버를 GPU 한 장짜리 노�
 
 ## 9. 실행 방법
 
+### 9-1. 설정 없이 바로
+
+```sh
+make run
+```
+
+**끝입니다.** env 파일을 만들 필요가 없습니다. 모든 설정에 기본값이 있습니다.
+
+```
+WRN CB-Tumblebug base URL was not configured, so deployment calls will not reach a real
+    platform  url=http://localhost:1323/tumblebug source=default
+WRN Planning model is not configured: the intent endpoint will report 503
+WRN Dry run is on: deploy, control and delete calls are planned and archived but never sent
+INF Starting server port=8090 basePath=/aiapp model=claude-opus-5 tools=13
+```
+
+이 상태에서 **클라우드에 닿지 않는 것은 전부 동작합니다.**
+
+```sh
+curl localhost:8090/aiapp/readyz                          # {"message":"Service is ready"}
+curl localhost:8090/aiapp/apps                            # 등록된 응용 3건
+curl -G localhost:8090/aiapp/apps/search      --data-urlencode "q=라마 추론서버"                     # 후보 순위 + 판정 근거
+curl localhost:8090/aiapp/tools                           # 도구 13개와 등급
+curl localhost:8090/aiapp/archive                         # 아카이브
+open http://localhost:8090/aiapp/api/index.html           # Swagger UI
+```
+
+클라우드에 닿는 경로만 실패합니다.
+
+```sh
+curl localhost:8090/aiapp/ns/default/deployments/none-01/accelerator
+# HTTP 500  {"message":"Accelerator probe failed"}
+```
+
+**기동 로그가 base URL 과 그 출처(`default`/`environment`)를 반드시 찍습니다.**
+기본값을 주는 대신, 잘못된 곳을 가리키는 서비스가 첫 줄에서 그렇다고 말하게 했습니다.
+
+### 9-2. 실제 CB-Tumblebug 에 붙일 때
+
 ```sh
 cp conf/template-setup.env conf/setup.env
 # conf/setup.env 를 채운다 (아래 설정 표 참고)
-source conf/setup.env
-make build
-./bin/ai-agent-proto
+make run
 ```
 
-`make verify` 는 `gofmt` + `go build` + `golangci-lint` 를 순서대로 돌립니다.
-Swagger 재생성은 `make swag` 입니다.
+`conf/setup.env` 는 **있으면 읽고 없으면 넘어갑니다.** `source` 할 필요가 없어졌습니다.
+이미 환경변수로 설정된 값이 파일보다 우선합니다.
+
+### 9-3. Docker
+
+```sh
+make docker-up      # docker compose up -d --build
+make docker-logs
+make docker-down
+```
+
+**이쪽도 설정 파일이 필요 없습니다.**
+
+```
+$ docker compose up -d
+$ docker ps
+STATUS                  PORTS
+Up 10 seconds (healthy) 0.0.0.0:8090->8090/tcp, [::]:8090->8090/tcp
+
+$ curl localhost:8090/aiapp/readyz
+{"message":"Service is ready"}
+```
+
+실제 CB-Tumblebug 을 쓰려면 `.env` 만 만듭니다.
+
+```sh
+cp .env.example .env
+# AIAPP_TUMBLEBUG_BASE_URL 등을 채운다
+docker compose up -d
+```
+
+**compose 에 CB-Tumblebug 를 넣지 않았습니다.** cb-spider 와 DB 가 딸려오는 스택이라,
+넣으면 `docker compose up` 이 "이 프로토타입을 띄우는 명령" 이 아니라 "멀티클라우드 플랫폼
+전체를 띄우는 명령" 이 됩니다. 컨테이너 안에서 호스트의 Tumblebug 을 보도록
+`host.docker.internal` 이 기본값이고, Linux 에서도 되게 `extra_hosts` 를 걸어 두었습니다.
+
+컨테이너에서도 **dry-run 이 기본 `true`** 입니다. 실수로 띄운 컨테이너가 과금되는 자원을
+만들 수 없습니다. 아카이브는 named volume(`archive`)에 있어 컨테이너보다 오래 삽니다.
+
+### 9-4. 검증 명령
+
+```sh
+make verify     # gofmt + go build + go test + golangci-lint
+make test       # go test ./...
+make swag       # Swagger 재생성
+```
 
 ### 설정
 
 | 환경변수 | 기본값 | 설명 |
 |---|---|---|
 | `AIAPP_SERVER_PORT` | `8090` | 리스닝 포트 |
-| `AIAPP_TUMBLEBUG_BASE_URL` | (필수) | 예 `http://<host>:1323/tumblebug` |
+| `AIAPP_TUMBLEBUG_BASE_URL` | `http://localhost:1323/tumblebug` | 예 `http://<host>:1323/tumblebug`. **없어도 기동합니다.** 기동 로그가 출처를 찍습니다 |
 | `AIAPP_TUMBLEBUG_USERNAME` / `_PASSWORD` | | basic auth |
 | `AIAPP_TUMBLEBUG_TIMEOUT` | `20m` | Infra 생성이 동기라 넉넉해야 함 |
 | `AIAPP_TUMBLEBUG_IMAGE_NAMESPACE` | `system` | 이미지 카탈로그가 있는 네임스페이스 |
@@ -490,7 +663,8 @@ B 에서 8080 이 계속 살아 있으므로 VM 이나 리스너가 죽은 것�
 |---|---|
 | 자연어 intent 의 실제 Messages API 호출 | 이 환경에 API 키가 없음. 루프 자체는 스텁으로만 검증 |
 | **가속기 프로브의 원격 실행** | 파서는 실측 출력으로 단위테스트했지만, `POST /ns/{ns}/cmd/infra` 왕복은 VM 없이 확인 못 함 |
-| **NVIDIA 외 가속기 판독** | 프로브가 `nvidia-smi` 전용. 국산 NPU 는 벤더별 프로브가 필요 |
+| **NPU·TPU 실기기 판독** | **경로는 만들었습니다** (6-5). 파서는 공개 문서 예시로만 단위테스트했고 **실기기가 없습니다** |
+| **다벤더 프로브의 원격 실행 왕복** | 섹션 스크립트가 실제 노드에서 어떻게 도는지는 NVIDIA 노드에서만 봤습니다 |
 | 컨테이너 배포 | 3차년도 항목 |
 | 다중 노드(`nodeCount` > 1) 배포 | 비용 때문에 1대로만 검증 |
 | AWS 외 CSP 에서의 생성 | 비용·시간 때문에 AWS 만 |
