@@ -81,23 +81,44 @@ type ServingAccess struct {
 	Message   string   `json:"message"`
 }
 
-// AcceleratorDevice is one accelerator as the driver on the node reports it.
+// AcceleratorDevice is one accelerator as the node reports it.
 //
-// Fields the driver could not report are left empty and paired with a Known flag
+// Fields the node could not report are left empty and paired with a Known flag
 // rather than filled with zero, because zero reads as a measurement.
 type AcceleratorDevice struct {
 	NodeID string `json:"nodeId"`
 	Index  int    `json:"index"`
 	// UUID keeps the vendor prefix the driver prints. Stripping it splits one
 	// card into two identities wherever the prefixed form is used as a join key.
-	UUID          string `json:"uuid,omitempty"`
-	Name          string `json:"name,omitempty"`
-	Vendor        string `json:"vendor,omitempty"`
+	UUID   string `json:"uuid,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Vendor string `json:"vendor,omitempty"`
+	// Kind is gpu, npu or tpu. It says which class of AI semiconductor answered,
+	// which the vendor alone does not: one vendor can ship more than one class.
+	Kind string `json:"kind,omitempty"`
+	// Source names what produced this entry, for example nvidia-smi or pci. A
+	// reading taken off the PCI bus and one taken from a vendor driver carry
+	// different amounts of truth, and merging them without saying which is which
+	// makes an inventory look like a measurement.
+	Source string `json:"source,omitempty"`
+	// PCIBusID is the bus address in the domain:bus:device.function form the
+	// kernel prints. It is the only identifier every source shares, so it is
+	// what joins a vendor reading to its PCI entry.
+	PCIBusID      string `json:"pciBusId,omitempty"`
 	MemoryMiB     int    `json:"memoryMiB,omitempty"`
 	MemoryKnown   bool   `json:"memoryKnown"`
 	DriverVersion string `json:"driverVersion,omitempty"`
-	MIGEnabled    bool   `json:"migEnabled"`
-	MIGKnown      bool   `json:"migKnown"`
+	// KernelDriver is the driver the kernel actually bound to the device. An
+	// accelerator image whose driver never bound leaves this empty while the
+	// device itself still appears, which is the case the catalog comparison
+	// cannot see from the vendor tool alone.
+	KernelDriver string `json:"kernelDriver,omitempty"`
+	MIGEnabled   bool   `json:"migEnabled"`
+	MIGKnown     bool   `json:"migKnown"`
+	// VirtualFunction marks an SR-IOV virtual function. Counting a physical
+	// function and its virtual functions as separate cards inflates the device
+	// count on a virtualisation host.
+	VirtualFunction bool `json:"virtualFunction,omitempty"`
 }
 
 // Label names a device for a message an operator reads.
@@ -127,7 +148,11 @@ type AcceleratorReport struct {
 	Probed bool `json:"probed"`
 	// Mode is mig, bare_metal or unknown. Passthrough and bare metal look the
 	// same from inside a guest and are not split here.
-	Mode     string                 `json:"mode"`
+	Mode string `json:"mode"`
+	// Sources lists the probes that answered on at least one node, in the order
+	// they were tried. An empty list with Probed true means the nodes answered
+	// but carried nothing this probe knows how to read.
+	Sources  []string               `json:"sources,omitempty"`
 	Devices  []AcceleratorDevice    `json:"devices"`
 	Expected AcceleratorExpectation `json:"expected,omitempty"`
 	// Findings are the disagreements between the two. They are reported, not

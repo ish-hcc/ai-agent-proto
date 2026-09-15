@@ -871,6 +871,14 @@ const docTemplate = `{
                 "index": {
                     "type": "integer"
                 },
+                "kernelDriver": {
+                    "description": "KernelDriver is the driver the kernel actually bound to the device. An\naccelerator image whose driver never bound leaves this empty while the\ndevice itself still appears, which is the case the catalog comparison\ncannot see from the vendor tool alone.",
+                    "type": "string"
+                },
+                "kind": {
+                    "description": "Kind is gpu, npu or tpu. It says which class of AI semiconductor answered,\nwhich the vendor alone does not: one vendor can ship more than one class.",
+                    "type": "string"
+                },
                 "memoryKnown": {
                     "type": "boolean"
                 },
@@ -889,12 +897,24 @@ const docTemplate = `{
                 "nodeId": {
                     "type": "string"
                 },
+                "pciBusId": {
+                    "description": "PCIBusID is the bus address in the domain:bus:device.function form the\nkernel prints. It is the only identifier every source shares, so it is\nwhat joins a vendor reading to its PCI entry.",
+                    "type": "string"
+                },
+                "source": {
+                    "description": "Source names what produced this entry, for example nvidia-smi or pci. A\nreading taken off the PCI bus and one taken from a vendor driver carry\ndifferent amounts of truth, and merging them without saying which is which\nmakes an inventory look like a measurement.",
+                    "type": "string"
+                },
                 "uuid": {
                     "description": "UUID keeps the vendor prefix the driver prints. Stripping it splits one\ncard into two identities wherever the prefixed form is used as a join key.",
                     "type": "string"
                 },
                 "vendor": {
                     "type": "string"
+                },
+                "virtualFunction": {
+                    "description": "VirtualFunction marks an SR-IOV virtual function. Counting a physical\nfunction and its virtual functions as separate cards inflates the device\ncount on a virtualisation host.",
+                    "type": "boolean"
                 }
             }
         },
@@ -947,6 +967,13 @@ const docTemplate = `{
                 "probed": {
                     "description": "Probed is false when the nodes were never asked.",
                     "type": "boolean"
+                },
+                "sources": {
+                    "description": "Sources lists the probes that answered on at least one node, in the order\nthey were tried. An empty list with Probed true means the nodes answered\nbut carried nothing this probe knows how to read.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

@@ -1,0 +1,138 @@
+package deploy
+
+import (
+	"strings"
+)
+
+// Probe section names. Each section holds one tool's untouched output, so the
+// shell on the node only collects and every parser stays here in Go where it can
+// be unit tested against a captured sample.
+const (
+	sectionPCI     = "pci"
+	sectionNVIDIA  = "nvidia-smi"
+	sectionROCm    = "rocm-smi"
+	sectionRBLN    = "rbln-stat"
+	sectionFuriosa = "furiosa-smi"
+	sectionHL      = "hl-smi"
+	sectionTPU     = "tpu-info"
+)
+
+// sectionMarker prefixes each section header in the probe output. It is long and
+// specific so that a tool printing a banner of its own cannot be mistaken for it.
+const sectionMarker = "===AIAPP-PROBE "
+
+// acceleratorProbeCommand asks the node what it actually carries.
+//
+// It queries rather than collects. Continuous accelerator telemetry is a separate
+// job with its own agent and schema; copying that pipeline into a deployment
+// service would duplicate a collector with nowhere to put the samples.
+//
+// The PCI section runs first and unconditionally, because it is the only one that
+// needs nothing installed. A vendor tool that is absent and an accelerator that is
+// absent produce the same silence, and without the bus inventory those two stay
+// indistinguishable - which is exactly the case this probe exists to catch, since
+// an accelerator image whose driver never bound leaves a node looking healthy.
+//
+// Every vendor section is guarded by command -v and has its stderr dropped, so a
+// node carrying one vendor's tooling does not fail the probe for the others.
+const acceleratorProbeCommand = `
+echo "` + sectionMarker + sectionPCI + `==="
+for d in /sys/bus/pci/devices/*; do
+  [ -r "$d/class" ] || continue
+  cls=$(cat "$d/class" 2>/dev/null)
+  case "$cls" in 0x03*|0x12*) ;; *) continue ;; esac
+  drv="-"
+  if [ -L "$d/driver" ]; then drv=$(basename "$(readlink -f "$d/driver" 2>/dev/null)"); fi
+  pf="-"
+  if [ -e "$d/physfn" ]; then pf="vf"; fi
+  echo "$(basename "$d") $cls $(cat "$d/vendor" 2>/dev/null) $(cat "$d/device" 2>/dev/null) $drv $pf"
+done 2>/dev/null
+echo "` + sectionMarker + sectionNVIDIA + `==="
+command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi \
+  --query-gpu=index,uuid,name,memory.total,driver_version,mig.mode.current,pci.bus_id \
+  --format=csv,noheader,nounits 2>/dev/null
+echo "` + sectionMarker + sectionROCm + `==="
+command -v rocm-smi >/dev/null 2>&1 && rocm-smi \
+  --showid --showproductname --showmeminfo vram --showdriverversion --showbus --csv 2>/dev/null
+echo "` + sectionMarker + sectionRBLN + `==="
+command -v rbln-stat >/dev/null 2>&1 && rbln-stat 2>/dev/null
+echo "` + sectionMarker + sectionFuriosa + `==="
+command -v furiosa-smi >/dev/null 2>&1 && furiosa-smi info 2>/dev/null
+echo "` + sectionMarker + sectionHL + `==="
+command -v hl-smi >/dev/null 2>&1 && hl-smi \
+  -Q index,uuid,name,memory.total,driver_version,bus_id -f csv,noheader,nounits 2>/dev/null
+echo "` + sectionMarker + sectionTPU + `==="
+command -v tpu-info >/dev/null 2>&1 && tpu-info 2>/dev/null
+echo "` + sectionMarker + `end==="
+`
+
+// splitProbeSections cuts the probe output into its sections.
+//
+// Output that carries no marker at all is returned under sectionNVIDIA, so that a
+// node still running against the previous single-command probe keeps being read
+// instead of silently reporting nothing.
+func splitProbeSections(stdout string) map[string]string {
+	sections := make(map[string]string)
+
+	if !strings.Contains(stdout, sectionMarker) {
+		trimmed := strings.TrimSpace(stdout)
+		if trimmed != "" {
+			sections[sectionNVIDIA] = stdout
+		}
+		return sections
+	}
+
+	var (
+		current string
+		body    strings.Builder
+	)
+
+	flush := func() {
+		if current != "" && current != "end" {
+			sections[current] = body.String()
+		}
+		body.Reset()
+	}
+
+	for _, line := range strings.Split(stdout, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, sectionMarker) && strings.HasSuffix(trimmed, "===") {
+			flush()
+			current = strings.TrimSuffix(strings.TrimPrefix(trimmed, sectionMarker), "===")
+			continue
+		}
+		if current == "" {
+			continue
+		}
+		body.WriteString(line)
+		body.WriteString("\n")
+	}
+	flush()
+
+	return sections
+}
+
+// normalizeBusID rewrites a PCI address to the form sysfs uses, so that an
+// address from a vendor tool and one from the bus compare equal.
+//
+// nvidia-smi prints an eight digit domain and upper case hex; sysfs prints four
+// digits and lower case. Comparing the two unnormalised silently fails to join,
+// and the device then appears twice: once from its driver and once from the bus.
+func normalizeBusID(busID string) string {
+	busID = strings.ToLower(strings.TrimSpace(busID))
+	if busID == "" {
+		return ""
+	}
+
+	parts := strings.Split(busID, ":")
+	if len(parts) != 3 {
+		return busID
+	}
+
+	domain := strings.TrimLeft(parts[0], "0")
+	for len(domain) < 4 {
+		domain = "0" + domain
+	}
+
+	return domain + ":" + parts[1] + ":" + parts[2]
+}

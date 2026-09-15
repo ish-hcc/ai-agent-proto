@@ -29,6 +29,18 @@ definitions:
         type: string
       index:
         type: integer
+      kernelDriver:
+        description: |-
+          KernelDriver is the driver the kernel actually bound to the device. An
+          accelerator image whose driver never bound leaves this empty while the
+          device itself still appears, which is the case the catalog comparison
+          cannot see from the vendor tool alone.
+        type: string
+      kind:
+        description: |-
+          Kind is gpu, npu or tpu. It says which class of AI semiconductor answered,
+          which the vendor alone does not: one vendor can ship more than one class.
+        type: string
       memoryKnown:
         type: boolean
       memoryMiB:
@@ -41,6 +53,19 @@ definitions:
         type: string
       nodeId:
         type: string
+      pciBusId:
+        description: |-
+          PCIBusID is the bus address in the domain:bus:device.function form the
+          kernel prints. It is the only identifier every source shares, so it is
+          what joins a vendor reading to its PCI entry.
+        type: string
+      source:
+        description: |-
+          Source names what produced this entry, for example nvidia-smi or pci. A
+          reading taken off the PCI bus and one taken from a vendor driver carry
+          different amounts of truth, and merging them without saying which is which
+          makes an inventory look like a measurement.
+        type: string
       uuid:
         description: |-
           UUID keeps the vendor prefix the driver prints. Stripping it splits one
@@ -48,6 +73,12 @@ definitions:
         type: string
       vendor:
         type: string
+      virtualFunction:
+        description: |-
+          VirtualFunction marks an SR-IOV virtual function. Counting a physical
+          function and its virtual functions as separate cards inflates the device
+          count on a virtualisation host.
+        type: boolean
     type: object
   model.AcceleratorExpectation:
     properties:
@@ -87,6 +118,14 @@ definitions:
       probed:
         description: Probed is false when the nodes were never asked.
         type: boolean
+      sources:
+        description: |-
+          Sources lists the probes that answered on at least one node, in the order
+          they were tried. An empty list with Probed true means the nodes answered
+          but carried nothing this probe knows how to read.
+        items:
+          type: string
+        type: array
     type: object
   model.AcceleratorRequirement:
     properties:

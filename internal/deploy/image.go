@@ -23,18 +23,28 @@ const imageCandidates = 20
 type acceleratorVendor string
 
 const (
-	vendorNVIDIA  acceleratorVendor = "nvidia"
-	vendorAMD     acceleratorVendor = "amd"
-	vendorIntel   acceleratorVendor = "intel"
-	vendorUnknown acceleratorVendor = ""
+	vendorNVIDIA     acceleratorVendor = "nvidia"
+	vendorAMD        acceleratorVendor = "amd"
+	vendorIntel      acceleratorVendor = "intel"
+	vendorRebellions acceleratorVendor = "rebellions"
+	vendorFuriosa    acceleratorVendor = "furiosa"
+	vendorUnknown    acceleratorVendor = ""
 )
 
 // vendorKeywords maps a vendor to the words that identify it in a device model
 // or an image distribution name. The lists are lowercase and matched as substrings.
+//
+// The NPU vendors are here for the same reason the GPU vendors are: an image
+// carries one vendor's driver, and an image built for one accelerator on a node
+// carrying another boots fine and never binds. The domestic NPUs reach the
+// application through a vLLM plugin, so the runtime does not change and nothing
+// upstream of the image would notice the mismatch.
 var vendorKeywords = map[acceleratorVendor][]string{
-	vendorNVIDIA: {"nvidia", "tesla", "geforce"},
-	vendorAMD:    {"amd", "radeon", "instinct"},
-	vendorIntel:  {"intel", "gaudi", "habana"},
+	vendorNVIDIA:     {"nvidia", "tesla", "geforce"},
+	vendorAMD:        {"amd", "radeon", "instinct"},
+	vendorIntel:      {"intel", "gaudi", "habana"},
+	vendorRebellions: {"rebellions", "rbln", "atom"},
+	vendorFuriosa:    {"furiosa", "rngd", "warboy"},
 }
 
 // ImageChoice is the image selected for a spec, with why it was selected.
