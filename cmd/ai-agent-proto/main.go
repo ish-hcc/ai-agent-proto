@@ -35,6 +35,13 @@ const shutdownTimeout = 10 * time.Second
 func main() {
 	ctx := context.Background()
 
+	// The settings file is optional. Every setting has a default, so a checkout
+	// with no file starts and serves everything that does not touch a cloud.
+	if err := config.LoadEnvFile(config.DefaultEnvFile); err != nil {
+		log.Error().Err(err).Str("file", config.DefaultEnvFile).Msg("Failed to read the settings file")
+		os.Exit(1)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to load configuration")
@@ -62,6 +69,16 @@ func main() {
 	llmClient := llm.NewClient(cfg.LLM)
 	agentService := agent.NewService(llmClient, registry, archiveStore, cfg.Agent)
 
+	// Which CB-Tumblebug this talks to is worth one line at startup whatever the
+	// answer, because a service pointed at the wrong platform behaves normally
+	// until the first deployment and then fails somewhere far from the cause.
+	if cfg.Tumblebug.BaseURLFromDefault {
+		log.Warn().Str("url", cfg.Tumblebug.BaseURL).Str("source", "default").
+			Msg("CB-Tumblebug base URL was not configured, so deployment calls will not reach a real platform")
+	} else {
+		log.Info().Str("url", cfg.Tumblebug.BaseURL).Str("source", "environment").
+			Msg("Using CB-Tumblebug")
+	}
 	if !llmClient.Enabled() {
 		// Everything except the natural language endpoint still works, so this is
 		// a warning rather than a startup failure.
