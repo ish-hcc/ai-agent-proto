@@ -1,0 +1,1073 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 응용 자동화 에이전트</title>
+<style>
+  :root {
+    --bg: #FAFAF8; --panel: #FFFFFF; --line: #E2E2DE; --line-soft: #EFEFEA;
+    --ink: #1A1A1A; --ink-2: #555; --ink-3: #8A8A82;
+    --accent: #4527A0; --accent-soft: #F1EDFA;
+    --ok: #1B5E20; --ok-soft: #E8F5E9;
+    --warn: #8A5A00; --warn-soft: #FFF7E6;
+    --bad: #B71C1C; --bad-soft: #FFEBEE;
+    --info: #0D47A1; --info-soft: #E3F2FD;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 14px/1.6 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  }
+  code, pre, .mono { font-family: var(--mono); }
+
+  /* ---------- layout ---------- */
+  .wrap { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+  nav {
+    background: #1F2937; color: #E8E8E4; padding: 20px 0;
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  nav h1 { font-size: 14px; margin: 0 20px 4px; color: #FFF; letter-spacing: -.2px; }
+  nav .sub { font-size: 11px; color: #9AA3AF; margin: 0 20px 18px; line-height: 1.5; }
+  nav a {
+    display: block; padding: 9px 20px; color: #C9CED6; text-decoration: none;
+    font-size: 13px; border-left: 3px solid transparent; cursor: pointer;
+  }
+  nav a:hover { background: #273244; color: #FFF; }
+  nav a.on { background: #111827; color: #FFF; border-left-color: #8B7FD4; font-weight: 700; }
+  nav .sect { font-size: 10px; color: #6B7280; margin: 18px 20px 6px; letter-spacing: 1.2px; }
+  nav .foot { margin: 22px 20px 0; font-size: 11px; color: #6B7280; line-height: 1.7; }
+  nav .foot a { display: inline; padding: 0; border: 0; color: #9AA3AF; text-decoration: underline; }
+
+  main { padding: 28px 32px 64px; max-width: 1180px; }
+  .page { display: none; }
+  .page.on { display: block; }
+  h2 { font-size: 20px; margin: 0 0 4px; }
+  .lede { color: var(--ink-2); margin: 0 0 22px; font-size: 13px; }
+
+  /* ---------- panel ---------- */
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 18px 20px; margin-bottom: 16px;
+  }
+  .panel > h3 { font-size: 14px; margin: 0 0 12px; }
+  .panel > h3 .hint { font-weight: 400; color: var(--ink-3); font-size: 12px; margin-left: 8px; }
+  .grid { display: grid; gap: 12px; }
+  .g2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .g3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+
+  /* ---------- stat ---------- */
+  .stat { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: #FDFDFB; }
+  .stat .k { font-size: 11px; color: var(--ink-3); margin-bottom: 4px; }
+  .stat .v { font-size: 17px; font-weight: 700; word-break: break-all; }
+  .stat .v.sm { font-size: 13px; font-weight: 400; }
+
+  /* ---------- badge ---------- */
+  .b {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; line-height: 1.7; white-space: nowrap;
+  }
+  .b-read { background: var(--ok-soft); color: var(--ok); }
+  .b-review { background: var(--info-soft); color: var(--info); }
+  .b-write { background: var(--warn-soft); color: var(--warn); }
+  .b-destructive { background: var(--bad-soft); color: var(--bad); }
+  .b-gpu { background: var(--ok-soft); color: var(--ok); }
+  .b-npu { background: var(--info-soft); color: var(--info); }
+  .b-tpu { background: var(--accent-soft); color: var(--accent); }
+  .b-on { background: var(--bad-soft); color: var(--bad); }
+  .b-off { background: var(--ok-soft); color: var(--ok); }
+  .b-mut { background: #F0F0EC; color: var(--ink-3); }
+  .b-reason { background: var(--accent-soft); color: var(--accent); font-weight: 400; margin: 0 4px 4px 0; }
+
+  /* ---------- controls ---------- */
+  input[type=text], textarea, select {
+    width: 100%; padding: 9px 11px; border: 1px solid var(--line);
+    border-radius: 7px; font: inherit; background: #FFF; color: var(--ink);
+  }
+  textarea { resize: vertical; min-height: 68px; font-family: var(--mono); font-size: 12.5px; }
+  input:focus, textarea:focus, select:focus { outline: 2px solid #C9BFEC; outline-offset: -1px; }
+  button {
+    padding: 9px 16px; border: 1px solid var(--accent); background: var(--accent);
+    color: #FFF; border-radius: 7px; font: inherit; font-weight: 700; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.12); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: #FFF; color: var(--accent); }
+  button.danger { background: #FFF; color: var(--bad); border-color: #E0B4B4; }
+  .row { display: flex; gap: 8px; align-items: flex-start; }
+  .row > *:first-child { flex: 1; }
+  label { display: block; font-size: 12px; color: var(--ink-2); margin: 0 0 4px; }
+  .field { margin-bottom: 10px; }
+
+  /* ---------- wire (request/response) ---------- */
+  details.wire { margin-top: 12px; border-top: 1px dashed var(--line); padding-top: 10px; }
+  /* A fold with nothing in it yet would otherwise render the browser's own
+     summary text, which reads like a control that does nothing. */
+  details.wire:empty { display: none; }
+  details.wire > summary {
+    cursor: pointer; font-size: 12px; color: var(--ink-3); list-style: none; user-select: none;
+  }
+  details.wire > summary::before { content: "▸ "; }
+  details.wire[open] > summary::before { content: "▾ "; }
+  details.wire > summary:hover { color: var(--accent); }
+  .wire-body { margin-top: 10px; }
+  .wire-line {
+    font-family: var(--mono); font-size: 12px; padding: 7px 10px; border-radius: 6px;
+    background: #1F2937; color: #D7DCE3; overflow-x: auto; white-space: pre; margin-bottom: 6px;
+  }
+  .wire-line .m { color: #FFD479; font-weight: 700; }
+  .wire-line .s-ok { color: #8FD98F; font-weight: 700; }
+  .wire-line .s-bad { color: #FF9C9C; font-weight: 700; }
+  pre.json {
+    font-size: 12px; background: #FBFBF8; border: 1px solid var(--line-soft);
+    border-radius: 6px; padding: 10px 12px; margin: 0; max-height: 380px;
+    overflow: auto; white-space: pre-wrap; word-break: break-word;
+  }
+
+  /* ---------- cards / list ---------- */
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: #FDFDFB; }
+  .card h4 { margin: 0 0 3px; font-size: 14px; }
+  .card .id { font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+  .card .meta { margin-top: 9px; font-size: 12px; color: var(--ink-2); }
+  .card .acts { margin-top: 11px; display: flex; gap: 6px; }
+  .card .acts button { padding: 5px 10px; font-size: 12px; font-weight: 400; }
+
+  .score { height: 5px; background: var(--line-soft); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  .score > i { display: block; height: 100%; background: var(--accent); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th { font-size: 11px; color: var(--ink-3); font-weight: 700; letter-spacing: .3px; }
+  tr.click { cursor: pointer; }
+  tr.click:hover td { background: #F7F5FD; }
+
+  .note {
+    border-left: 3px solid var(--line); padding: 8px 0 8px 12px;
+    color: var(--ink-2); font-size: 12.5px; margin: 10px 0;
+  }
+  .note.warn { border-left-color: #E5A540; background: var(--warn-soft); padding-right: 12px; border-radius: 0 6px 6px 0; }
+  .note.bad { border-left-color: #C62828; background: var(--bad-soft); padding-right: 12px; border-radius: 0 6px 6px 0; }
+  .note.info { border-left-color: #1565C0; background: var(--info-soft); padding-right: 12px; border-radius: 0 6px 6px 0; }
+
+  .empty { color: var(--ink-3); font-size: 13px; padding: 18px 0; text-align: center; }
+  .spin { color: var(--ink-3); font-size: 12px; }
+  .err { color: var(--bad); font-size: 13px; }
+
+  @media (max-width: 860px) {
+    .wrap { grid-template-columns: 1fr; }
+    nav { position: static; height: auto; }
+    main { padding: 20px 16px 48px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav>
+  <h1>AI 응용 자동화 에이전트</h1>
+  <p class="sub">AI-MCMP 1차년도 프로토타입<br>㈜이노그리드</p>
+
+  <div class="sect">상태</div>
+  <a data-page="overview" class="on">개요</a>
+
+  <div class="sect">AI 응용</div>
+  <a data-page="catalog">응용 카탈로그</a>
+  <a data-page="match">자연어 매칭</a>
+
+  <div class="sect">에이전트</div>
+  <a data-page="tools">도구와 게이트</a>
+  <a data-page="intent">자연어 지시</a>
+
+  <div class="sect">배포</div>
+  <a data-page="deploy">배포와 라이프사이클</a>
+
+  <div class="sect">기록</div>
+  <a data-page="archive">아카이브</a>
+
+  <p class="foot">
+    이 화면은 오른쪽 API 를 <b>실제로 호출</b>합니다.<br>
+    응답은 손대지 않고 그대로 보여 줍니다.<br><br>
+    <a href="api/index.html" target="_blank">Swagger UI</a>
+  </p>
+</nav>
+
+<main>
+
+<!-- ============ 개요 ============ -->
+<section class="page on" id="p-overview">
+  <h2>개요</h2>
+  <p class="lede">이 서비스가 지금 어떤 상태인지. 전부 이 서버에 물어본 값입니다.</p>
+
+  <div class="panel">
+    <h3>서비스 상태</h3>
+    <div class="grid g3" id="ov-stats"><div class="spin">부르는 중...</div></div>
+    <div id="ov-notes"></div>
+    <div class="row" style="margin-top:14px">
+      <div></div>
+      <button class="ghost" onclick="loadOverview()">새로고침</button>
+    </div>
+    <details class="wire" id="ov-wire"></details>
+  </div>
+
+  <div class="panel">
+    <h3>이 프로토타입이 하는 일</h3>
+    <div class="note">
+      운영자가 <b>자연어로 지시</b>하면 LLM 이 어떤 API 를 어떤 값으로 부를지 정하고,
+      AI반도체 노드에 추론 서버를 올리고 제어하며, 그 과정을 전부 기록합니다.
+    </div>
+    <div class="grid g2" style="margin-top:12px">
+      <div class="card">
+        <h4>요구사항이 인프라가 된다</h4>
+        <div class="meta">
+          응용이 <code>gpu x1, 22GiB 이상</code> 이라고만 말하면 어느 CSP 의 어느 인스턴스를
+          쓸지는 서비스가 정합니다. <b>코드에 CSP 이름이 없습니다.</b>
+        </div>
+      </div>
+      <div class="card">
+        <h4>쓰기는 기본적으로 막혀 있다</h4>
+        <div class="meta">
+          배포·제어·삭제는 등급이 붙어 있고, dry-run 이 켜져 있으면 계획과 검증까지만 하고 멈춥니다.
+          <b>LLM 이 실행 여부를 정하지 않습니다.</b>
+        </div>
+      </div>
+      <div class="card">
+        <h4>만들어진 것과 쓸 수 있는 것은 다르다</h4>
+        <div class="meta">
+          노드가 <code>Running</code> 이라고 가속기를 쓸 수 있다는 뜻이 아닙니다.
+          배포 직후 노드에 직접 물어 카탈로그의 약속과 대조합니다.
+        </div>
+      </div>
+      <div class="card">
+        <h4>왜 그렇게 정했는지가 남는다</h4>
+        <div class="meta">
+          최종 결과만이 아니라 지시·고른 도구·인자 전체·게이트가 막았는지까지 한 레코드에 남습니다.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 카탈로그 ============ -->
+<section class="page" id="p-catalog">
+  <h2>응용 카탈로그</h2>
+  <p class="lede">
+    AI 응용 메타데이터 규격을 실물로 본 것입니다. <b>런타임 축과 가속기 축이 서로 다른 필드</b>라는 것이 핵심입니다.
+  </p>
+
+  <div class="panel">
+    <h3>등록된 AI 응용 <span class="hint" id="cat-count"></span></h3>
+    <div class="grid g2" id="cat-list"><div class="spin">부르는 중...</div></div>
+    <div class="row" style="margin-top:14px">
+      <div></div>
+      <button class="ghost" onclick="loadCatalog()">새로고침</button>
+    </div>
+    <details class="wire" id="cat-wire"></details>
+  </div>
+
+  <div class="panel" id="cat-detail-panel" style="display:none">
+    <h3>상세 <span class="hint" id="cat-detail-id"></span></h3>
+    <pre class="json" id="cat-detail"></pre>
+    <details class="wire" id="cat-detail-wire"></details>
+  </div>
+
+  <div class="panel">
+    <h3>새 응용 등록 <span class="hint">같은 id 면 새 버전으로 교체됩니다</span></h3>
+    <div class="field">
+      <label>AppSpec (JSON)</label>
+      <textarea id="cat-new" rows="14"></textarea>
+    </div>
+    <div class="row">
+      <div class="err" id="cat-new-msg"></div>
+      <button class="ghost" onclick="resetNewApp()">예시로 되돌리기</button>
+      <button onclick="registerApp()">등록</button>
+    </div>
+    <details class="wire" id="cat-new-wire"></details>
+  </div>
+</section>
+
+<!-- ============ 매칭 ============ -->
+<section class="page" id="p-match">
+  <h2>자연어 매칭</h2>
+  <p class="lede">
+    <b>"라마 추론서버 올려줘" 가 카탈로그의 어느 항목인가</b>를 정하는 단계입니다.
+    규칙 기반 매처가 후보를 좁히고 <b>왜 골랐는지를 같이 돌려줍니다.</b>
+  </p>
+
+  <div class="panel">
+    <h3>운영자가 쓰는 말 그대로 넣어 보세요</h3>
+    <div class="row">
+      <input type="text" id="mt-q" placeholder="라마 추론서버 올려줘" value="라마 추론서버 올려줘">
+      <button onclick="runMatch()">검색</button>
+    </div>
+    <div style="margin-top:10px" id="mt-samples"></div>
+    <div style="margin-top:16px" class="grid g2" id="mt-list"></div>
+    <div id="mt-msg"></div>
+    <details class="wire" id="mt-wire"></details>
+  </div>
+
+  <div class="panel">
+    <h3>읽는 법</h3>
+    <div class="note">
+      <b>구조화된 필드에 걸려야 후보가 됩니다.</b> id·별칭·모델명·런타임·포맷이 그것입니다.
+      설명문 단어는 동점을 가르는 데만 쓰이고 혼자서는 후보를 만들지 못합니다.
+      흔한 단어 하나로 확신에 찬 오답을 내는 것보다 "없다" 가 낫기 때문입니다.
+    </div>
+    <div class="note">
+      <b>후보가 없으면 빈 목록이 돌아옵니다.</b> 그때 시스템 프롬프트가 모델에게
+      "가장 비슷한 것을 배포하지 말고 없다고 답하라" 고 지시합니다.
+    </div>
+    <div class="note warn">
+      <b>알려진 한계.</b> 점수가 별칭의 길이나 특이도를 반영하지 않아, 별칭이 겹치면 동점이 납니다.
+      <code>라마npu</code> 로 검색해 보면 두 응용이 같은 45점으로 나옵니다. 아직 안 고쳤습니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============ 도구 ============ -->
+<section class="page" id="p-tools">
+  <h2>도구와 게이트</h2>
+  <p class="lede">
+    에이전트가 부를 수 있는 함수 목록입니다. <b>등급이 곧 안전장치</b>이고,
+    실행 여부는 서비스 설정이지 모델의 판단이 아닙니다.
+  </p>
+
+  <div class="panel">
+    <h3>게이트 상태</h3>
+    <div id="tl-gate"><div class="spin">부르는 중...</div></div>
+  </div>
+
+  <div class="panel">
+    <h3>도구 <span class="hint" id="tl-count"></span></h3>
+    <div id="tl-list"></div>
+    <details class="wire" id="tl-wire"></details>
+  </div>
+</section>
+
+<!-- ============ 지시 ============ -->
+<section class="page" id="p-intent">
+  <h2>자연어 지시</h2>
+  <p class="lede">
+    지시를 넣으면 LLM 이 <b>다음에 무엇을 부를지</b>를 반복해서 정합니다.
+    한 번에 계획을 다 뽑지 않고, 중간 결과가 다음 호출을 바꿉니다.
+  </p>
+
+  <div class="panel">
+    <h3>지시</h3>
+    <div class="field">
+      <textarea id="in-q" rows="3">Llama 3.1 8B 추론 서버를 GPU 한 장짜리 노드에 올려줘</textarea>
+    </div>
+    <div class="field">
+      <label>네임스페이스</label>
+      <input type="text" id="in-ns" value="default">
+    </div>
+    <div class="row">
+      <div class="spin" id="in-msg"></div>
+      <button onclick="runIntent()" id="in-btn">실행</button>
+    </div>
+    <div id="in-result" style="margin-top:14px"></div>
+    <details class="wire" id="in-wire"></details>
+  </div>
+
+  <div class="panel">
+    <h3>무엇이 기록되나</h3>
+    <div class="note">
+      LLM 이 고른 <b>도구와 인자 전체</b>, 도구가 돌려준 응답, <b>게이트가 막았는지</b>,
+      소요 시간까지 한 레코드로 남습니다. 결과만 남기면 왜 그 결정을 했는지가 사라져서,
+      2차년도의 "배포 정보 수집 및 추론 재적용" 에 쓸 수 없습니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============ 배포 ============ -->
+<section class="page" id="p-deploy">
+  <h2>배포와 라이프사이클</h2>
+  <p class="lede">
+    여기서 부르는 것은 전부 <b>실제 호출</b>입니다. 이종 클라우드 관리 계층이 붙어 있지 않으면
+    실패 응답이 그대로 보입니다. 그것도 동작의 일부라 감추지 않습니다.
+  </p>
+
+  <div class="panel">
+    <h3>배포 계획 <span class="hint">클라우드에 아무것도 만들지 않습니다</span></h3>
+    <div class="grid g3">
+      <div class="field">
+        <label>응용</label>
+        <select id="dp-app"></select>
+      </div>
+      <div class="field">
+        <label>네임스페이스</label>
+        <input type="text" id="dp-ns" value="default">
+      </div>
+      <div class="field">
+        <label>배포 이름</label>
+        <input type="text" id="dp-name" value="demo-01">
+      </div>
+    </div>
+    <div class="row">
+      <div class="spin" id="dp-plan-msg"></div>
+      <button class="ghost" onclick="runPlan()">계획만 만들기</button>
+    </div>
+    <div id="dp-plan-out" style="margin-top:12px"></div>
+    <details class="wire" id="dp-plan-wire"></details>
+  </div>
+
+  <div class="panel">
+    <h3>가속기 스펙 추천 <span class="hint">응용의 요구사항이 그대로 스펙 필터가 됩니다</span></h3>
+    <div class="row">
+      <div class="note" style="margin:0">
+        위에서 고른 응용의 <code>accelerator</code> 와 <code>resources</code> 를
+        그대로 조건으로 바꿔 가장 싼 것부터 받아옵니다.
+      </div>
+      <button class="ghost" onclick="runSpecs()">추천받기</button>
+    </div>
+    <div id="dp-spec-out" style="margin-top:12px"></div>
+    <details class="wire" id="dp-spec-wire"></details>
+  </div>
+
+  <div class="panel">
+    <h3>배포 목록</h3>
+    <div class="row">
+      <div class="spin" id="dp-list-msg"></div>
+      <button class="ghost" onclick="loadDeployments()">불러오기</button>
+    </div>
+    <div id="dp-list" style="margin-top:12px"></div>
+    <details class="wire" id="dp-list-wire"></details>
+  </div>
+
+  <div class="panel">
+    <h3>가속기 판독 <span class="hint">만들어진 것과 쓸 수 있는 것은 다릅니다</span></h3>
+    <div class="row">
+      <input type="text" id="dp-infra" placeholder="배포 이름 (infraId)">
+      <button class="ghost" onclick="runProbe()">노드에 물어보기</button>
+    </div>
+    <div id="dp-probe-out" style="margin-top:12px"></div>
+    <details class="wire" id="dp-probe-wire"></details>
+    <div class="note info" style="margin-top:14px">
+      노드에서 <b>PCI 버스를 먼저 읽고</b>, 벤더 도구(<code>nvidia-smi</code>·<code>rocm-smi</code>·
+      <code>rbln-stat</code>·<code>furiosa-smi</code>·<code>hl-smi</code>·<code>tpu-info</code>)가
+      있으면 그 위에 덧칠합니다. 버스는 아무것도 설치돼 있지 않아도 답하므로,
+      <b>드라이버가 안 붙은 장치와 아예 없는 장치를 가를 수 있습니다.</b>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>이 화면에 쓰기 버튼이 없는 이유</h3>
+    <div class="note warn">
+      실제 생성·제어·삭제 버튼을 의도적으로 넣지 않았습니다. dry-run 이 켜져 있어도 마찬가지입니다.
+      <b>되돌릴 수 없고 과금되는 행동을 화면의 버튼 하나에 걸어 두지 않는 것</b>이 이 프로토타입의
+      안전장치와 같은 취지입니다. 계획과 검증까지가 여기서 할 수 있는 전부이고,
+      실제 생성은 API 를 직접 부르거나 에이전트를 통해서 합니다.
+    </div>
+  </div>
+</section>
+
+<!-- ============ 아카이브 ============ -->
+<section class="page" id="p-archive">
+  <h2>아카이브</h2>
+  <p class="lede">
+    지시·판단·결과가 한 줄에 한 레코드씩 남습니다. <b>게이트가 막은 것도 기록됩니다.</b>
+  </p>
+
+  <div class="panel">
+    <h3>실행 기록 <span class="hint" id="ar-count"></span></h3>
+    <div id="ar-list"><div class="spin">부르는 중...</div></div>
+    <div class="row" style="margin-top:14px">
+      <div></div>
+      <button class="ghost" onclick="loadArchive()">새로고침</button>
+    </div>
+    <details class="wire" id="ar-wire"></details>
+  </div>
+
+  <div class="panel" id="ar-detail-panel" style="display:none">
+    <h3>레코드 <span class="hint" id="ar-detail-id"></span></h3>
+    <pre class="json" id="ar-detail"></pre>
+    <details class="wire" id="ar-detail-wire"></details>
+  </div>
+</section>
+
+</main>
+</div>
+
+<script>
+'use strict';
+
+/* The console is mounted under the same base path as the API, so every call is
+   relative. Hardcoding /aiapp here would break the page the moment the service
+   is mounted anywhere else. */
+const BASE = location.pathname.replace(/\/ui\/?$/, '');
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
+  (c) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+
+/* ---------- API ----------
+   Every response is kept whole, including failures: the page shows what the
+   server actually said rather than a message of its own, because a console that
+   paraphrases errors hides the one thing it was opened to find out. */
+async function api(method, path, body) {
+  const url = BASE + path;
+  const started = performance.now();
+  const init = { method, headers: { 'Accept': 'application/json' } };
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+
+  let res, text;
+  try {
+    res = await fetch(url, init);
+    text = await res.text();
+  } catch (e) {
+    return {
+      ok: false, status: 0, method, url, body,
+      ms: Math.round(performance.now() - started),
+      data: null, raw: String(e),
+      transport: '서버에 닿지 못했습니다: ' + String(e)
+    };
+  }
+
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (_) { /* not json */ }
+
+  return {
+    ok: res.ok, status: res.status, method, url, body,
+    ms: Math.round(performance.now() - started),
+    data, raw: text, transport: null
+  };
+}
+
+/* wire renders the request and the response verbatim under a fold. It is on
+   every panel on purpose: the point of the console is that it adds nothing. */
+function wire(el, r, label) {
+  const cls = r.status === 0 ? 's-bad' : (r.ok ? 's-ok' : 's-bad');
+  const status = r.status === 0 ? '연결 실패' : r.status;
+  const shortUrl = r.url.replace(location.origin, '');
+
+  let out = '';
+  out += `<div class="wire-body">`;
+  out += `<div class="wire-line"><span class="m">${esc(r.method)}</span> ${esc(decodeURI(shortUrl))}`;
+  out += `   <span class="${cls}">${esc(status)}</span>  ${r.ms}ms</div>`;
+  if (r.body !== undefined) {
+    out += `<div style="font-size:11px;color:var(--ink-3);margin:8px 0 4px">요청 본문</div>`;
+    out += `<pre class="json">${esc(JSON.stringify(r.body, null, 2))}</pre>`;
+  }
+  out += `<div style="font-size:11px;color:var(--ink-3);margin:8px 0 4px">응답 본문</div>`;
+  out += `<pre class="json">${esc(r.data ? JSON.stringify(r.data, null, 2) : (r.raw || '(본문 없음)'))}</pre>`;
+  out += `</div>`;
+
+  el.innerHTML = `<summary>${esc(label || '이 화면이 부른 요청과 받은 응답')}</summary>` + out;
+}
+
+/* A failed call is reported with the server's own words, never replaced. */
+function failNote(r) {
+  if (r.transport) {
+    return `<div class="note bad"><b>${esc(r.transport)}</b><br>
+      서비스가 떠 있는지 확인해 주세요.</div>`;
+  }
+  const msg = (r.data && (r.data.message || r.data.error)) || r.raw || '(본문 없음)';
+  return `<div class="note bad"><b>HTTP ${esc(r.status)}</b> ${esc(msg)}</div>`;
+}
+
+/* ---------- navigation ---------- */
+/* Pages that call on first open. The matcher runs its default query so the page
+   shows what it does instead of an empty box asking to be told. */
+const loaders = {
+  overview: loadOverview, catalog: loadCatalog, match: runMatch,
+  tools: loadTools, intent: null, deploy: loadDeployPage, archive: loadArchive
+};
+const loaded = {};
+
+document.querySelectorAll('nav a[data-page]').forEach((a) => {
+  a.addEventListener('click', () => show(a.dataset.page));
+});
+
+function show(name) {
+  document.querySelectorAll('nav a[data-page]').forEach((a) =>
+    a.classList.toggle('on', a.dataset.page === name));
+  document.querySelectorAll('.page').forEach((p) =>
+    p.classList.toggle('on', p.id === 'p-' + name));
+  location.hash = name;
+  if (!loaded[name] && loaders[name]) { loaded[name] = true; loaders[name](); }
+}
+
+/* ---------- 개요 ---------- */
+async function loadOverview() {
+  const ready = await api('GET', '/readyz');
+  const tools = await api('GET', '/tools');
+  wire($('ov-wire'), tools, 'GET /readyz 와 GET /tools 를 불렀습니다 (아래는 tools)');
+
+  const t = tools.data || {};
+  const list = t.tools || [];
+  const byGrade = list.reduce((m, x) => (m[x.grade] = (m[x.grade] || 0) + 1, m), {});
+  const guarded = list.filter((x) => x.guardedByDryRun).length;
+
+  const readyLabel = ready.status === 0 ? '연결 실패'
+    : (ready.ok ? ((ready.data && ready.data.message) || '준비됨') : 'HTTP ' + ready.status);
+
+  const dry = t.dryRun;
+  $('ov-stats').innerHTML = `
+    <div class="stat"><div class="k">서비스</div><div class="v sm">${esc(readyLabel)}</div></div>
+    <div class="stat"><div class="k">쓰기 게이트 (dry-run)</div><div class="v">
+      ${dry === undefined ? '<span class="b b-mut">모름</span>'
+        : dry ? '<span class="b b-off">켜짐 · 안전</span>'
+              : '<span class="b b-on">꺼짐 · 실제 과금</span>'}
+    </div></div>
+    <div class="stat"><div class="k">도구</div><div class="v">${list.length}<span
+      style="font-size:12px;font-weight:400;color:var(--ink-3)"> 개 · 게이트 대상 ${guarded}</span></div></div>
+    <div class="stat"><div class="k">읽기 / 검토</div><div class="v">${byGrade.read || 0} / ${byGrade.review || 0}</div></div>
+    <div class="stat"><div class="k">쓰기 / 파괴적</div><div class="v">${byGrade.write || 0} / ${byGrade.destructive || 0}</div></div>
+    <div class="stat"><div class="k">콘솔 경로</div><div class="v sm mono">${esc(BASE)}/ui</div></div>
+  `;
+
+  let notes = '';
+  if (!tools.ok) notes += failNote(tools);
+  if (dry === false) {
+    notes += `<div class="note bad"><b>dry-run 이 꺼져 있습니다.</b>
+      배포·제어·삭제가 실제로 실행되고 <b>과금됩니다.</b></div>`;
+  } else if (dry === true) {
+    notes += `<div class="note"><b>dry-run 이 켜져 있습니다.</b>
+      쓰기 도구는 계획과 사전 검증까지만 하고 멈춥니다.
+      이것은 요청 파라미터가 아니라 <b>서비스 설정</b>이라, 모델이 "확실하니 실행하자" 고 해도 바뀌지 않습니다.</div>`;
+  }
+  $('ov-notes').innerHTML = notes;
+}
+
+/* ---------- 카탈로그 ---------- */
+const SAMPLE_APP = {
+  id: 'vllm-rbln-llama31-8b',
+  name: 'vLLM Llama 3.1 8B on RBLN NPU',
+  version: '0.1.0',
+  runtime: 'vllm',
+  runtimeVersion: '0.6.3',
+  model: { id: 'meta-llama/Llama-3.1-8B-Instruct', format: 'safetensors', sizeGiB: 16 },
+  accelerator: { type: 'npu', minCount: 1, minMemoryGiB: 16 },
+  resources: { minVCPU: 8, minMemoryGiB: 32 },
+  serving: { port: 8000, healthPath: '/health', protocol: 'http' },
+  install: { userName: 'cb-user', commands: ['echo install'] },
+  aliases: ['라마npu', 'rbln'],
+  deployTargets: ['vm']
+};
+
+function resetNewApp() {
+  $('cat-new').value = JSON.stringify(SAMPLE_APP, null, 2);
+  $('cat-new-msg').textContent = '';
+}
+
+let APPS = [];
+
+async function loadCatalog() {
+  const r = await api('GET', '/apps');
+  wire($('cat-wire'), r);
+
+  if (!r.ok) { $('cat-list').innerHTML = failNote(r); return; }
+
+  APPS = (r.data && r.data.apps) || [];
+  $('cat-count').textContent = APPS.length + ' 건';
+  fillAppSelect();
+
+  if (!APPS.length) { $('cat-list').innerHTML = '<div class="empty">등록된 응용이 없습니다.</div>'; return; }
+
+  $('cat-list').innerHTML = APPS.map((a) => {
+    const acc = a.accelerator || {};
+    const kind = (acc.type || '').toLowerCase();
+    return `<div class="card">
+      <h4>${esc(a.name)}</h4>
+      <div class="id">${esc(a.id)} · v${esc(a.version)}</div>
+      <div class="meta">
+        <span class="b b-${esc(kind) || 'mut'}">${esc((acc.type || '?').toUpperCase())}</span>
+        <span class="b b-mut">runtime ${esc(a.runtime || '?')}</span>
+        ${acc.minCount ? `<span class="b b-mut">x${esc(acc.minCount)}</span>` : ''}
+        ${acc.minMemoryGiB ? `<span class="b b-mut">${esc(acc.minMemoryGiB)} GiB 이상</span>` : ''}
+      </div>
+      <div class="meta">${esc(a.description || '')}</div>
+      <div class="acts">
+        <button class="ghost" onclick="showApp('${esc(a.id)}')">상세</button>
+        <button class="danger" onclick="removeApp('${esc(a.id)}')">삭제</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function showApp(id) {
+  const r = await api('GET', '/apps/' + encodeURIComponent(id));
+  $('cat-detail-panel').style.display = '';
+  $('cat-detail-id').textContent = id;
+  $('cat-detail').textContent = r.data ? JSON.stringify(r.data, null, 2) : r.raw;
+  wire($('cat-detail-wire'), r);
+  $('cat-detail-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function removeApp(id) {
+  const r = await api('DELETE', '/apps/' + encodeURIComponent(id));
+  wire($('cat-wire'), r, 'DELETE 를 불렀습니다');
+  loadCatalog();
+}
+
+async function registerApp() {
+  let body;
+  try {
+    body = JSON.parse($('cat-new').value);
+  } catch (e) {
+    $('cat-new-msg').textContent = 'JSON 이 아닙니다: ' + e.message;
+    return;
+  }
+  $('cat-new-msg').textContent = '';
+
+  const r = await api('POST', '/apps', body);
+  wire($('cat-new-wire'), r);
+  if (!r.ok) {
+    $('cat-new-msg').innerHTML = failNote(r);
+  } else {
+    $('cat-new-msg').innerHTML = `<span style="color:var(--ok)">등록되었습니다.</span>`;
+    loadCatalog();
+  }
+}
+
+/* ---------- 매칭 ---------- */
+const SAMPLES = ['라마 추론서버 올려줘', '라마npu', '큐원 작은거', 'vllm', 'resnet 분류 모델', '없는모델 올려줘'];
+
+$('mt-samples').innerHTML = SAMPLES.map((s) =>
+  `<button class="ghost" style="padding:4px 10px;font-size:12px;font-weight:400;margin:0 6px 6px 0"
+    onclick="$('mt-q').value=${JSON.stringify(s).replace(/"/g, '&quot;')};runMatch()">${esc(s)}</button>`
+).join('');
+
+async function runMatch() {
+  const q = $('mt-q').value;
+  $('mt-list').innerHTML = '<div class="spin">부르는 중...</div>';
+  $('mt-msg').innerHTML = '';
+
+  const r = await api('GET', '/apps/search?q=' + encodeURIComponent(q));
+  wire($('mt-wire'), r);
+
+  if (!r.ok) { $('mt-list').innerHTML = ''; $('mt-msg').innerHTML = failNote(r); return; }
+
+  const hits = Array.isArray(r.data) ? r.data : [];
+  if (!hits.length) {
+    $('mt-list').innerHTML = '';
+    $('mt-msg').innerHTML = `<div class="note warn">
+      <b>후보가 없습니다.</b> 이것이 정상 동작입니다. 매처는 구조화된 필드에 걸린 것만 후보로 올리므로,
+      비슷해 보이는 것을 억지로 고르지 않습니다. 모델에게도 "없다고 답하라" 고 지시합니다.</div>`;
+    return;
+  }
+
+  const top = Math.max(...hits.map((h) => h.score || 0)) || 1;
+  const tie = hits.length > 1 && hits[0].score === hits[1].score;
+
+  $('mt-list').innerHTML = hits.map((h, i) => `
+    <div class="card">
+      <h4>${i === 0 ? '▲ ' : ''}${esc(h.name)}</h4>
+      <div class="id">${esc(h.appId)}</div>
+      <div class="meta" style="margin-top:8px">
+        <b style="font-size:16px">${esc(h.score)}</b>
+        <span style="color:var(--ink-3);font-size:12px">점</span>
+        <div class="score"><i style="width:${Math.round((h.score / top) * 100)}%"></i></div>
+      </div>
+      <div class="meta" style="margin-top:9px">
+        ${(h.reasons || []).map((x) => `<span class="b b-reason">${esc(x)}</span>`).join('')}
+      </div>
+      <div class="meta" style="margin-top:6px;font-size:11.5px">
+        runtime ${esc(h.runtime || '?')} · ${esc(h.modelId || '')}
+      </div>
+    </div>`).join('');
+
+  if (tie) {
+    $('mt-msg').innerHTML = `<div class="note warn">
+      <b>1위와 2위가 동점입니다.</b> 점수 체계가 별칭의 길이나 특이도를 반영하지 않아 생기는 것으로,
+      알려진 한계이고 아직 안 고쳤습니다. 이 경우 최종 선택은 LLM 이 합니다.</div>`;
+  }
+}
+
+/* ---------- 도구 ---------- */
+const GRADE_NOTE = {
+  read: '조회만 합니다. 게이트에 걸리지 않고 항상 실행됩니다.',
+  review: '아무것도 만들지 않고 가능 여부와 비용만 돌려줍니다.',
+  write: '자원을 만들거나 상태를 바꿉니다. dry-run 이 켜져 있으면 막힙니다.',
+  destructive: '되돌릴 수 없습니다. dry-run 이 켜져 있으면 막힙니다.'
+};
+const GRADE_ORDER = ['read', 'review', 'write', 'destructive'];
+
+async function loadTools() {
+  const r = await api('GET', '/tools');
+  wire($('tl-wire'), r);
+
+  if (!r.ok) { $('tl-gate').innerHTML = failNote(r); $('tl-list').innerHTML = ''; return; }
+
+  const dry = r.data.dryRun;
+  const list = r.data.tools || [];
+  $('tl-count').textContent = list.length + ' 개';
+
+  $('tl-gate').innerHTML = dry
+    ? `<div class="note"><b>dry-run 켜짐.</b> <code>write</code> 와 <code>destructive</code> 도구는
+       계획과 사전 검증까지만 하고 멈춥니다. 아래에서 <span class="b b-on">게이트</span> 가 붙은 것들입니다.<br><br>
+       이것은 <b>요청 파라미터가 아니라 서비스 설정</b>입니다. 모델이 무엇을 판단하든 도구 계층에서 막습니다.
+       시스템 프롬프트에도 게이트 상태를 알려 주는데, 지키라고 부탁하는 것이 아니라
+       운영자에게 "다 했습니다" 라고 잘못 보고하지 않게 하려는 것입니다.</div>`
+    : `<div class="note bad"><b>dry-run 꺼짐.</b> 쓰기 도구가 실제로 실행되고 과금됩니다.</div>`;
+
+  $('tl-list').innerHTML = GRADE_ORDER.map((g) => {
+    const items = list.filter((t) => t.grade === g);
+    if (!items.length) return '';
+    return `
+      <div style="margin-bottom:20px">
+        <div style="margin-bottom:6px">
+          <span class="b b-${g}">${g}</span>
+          <span style="font-size:12px;color:var(--ink-2);margin-left:8px">${esc(GRADE_NOTE[g] || '')}</span>
+        </div>
+        <table>
+          <tr><th style="width:230px">도구</th><th>하는 일</th><th style="width:78px">게이트</th></tr>
+          ${items.map((t) => `<tr>
+            <td class="mono" style="font-size:12px"><b>${esc(t.name)}</b>
+              <details class="wire" style="margin-top:6px;border:0;padding:0">
+                <summary style="font-size:11px">입력 스키마</summary>
+                <pre class="json" style="margin-top:6px;font-size:11px">${esc(JSON.stringify(t.inputSchema, null, 2))}</pre>
+              </details>
+            </td>
+            <td style="font-size:12.5px;color:var(--ink-2)">${esc(t.description)}</td>
+            <td>${t.guardedByDryRun ? '<span class="b b-on">걸림</span>' : '<span class="b b-mut">없음</span>'}</td>
+          </tr>`).join('')}
+        </table>
+      </div>`;
+  }).join('');
+}
+
+/* ---------- 지시 ---------- */
+async function runIntent() {
+  const intent = $('in-q').value;
+  const ns = $('in-ns').value || 'default';
+
+  $('in-btn').disabled = true;
+  $('in-msg').textContent = '모델에 묻는 중... (도구 호출을 반복하므로 시간이 걸릴 수 있습니다)';
+  $('in-result').innerHTML = '';
+
+  const r = await api('POST', `/ns/${encodeURIComponent(ns)}/intents`, { intent });
+  wire($('in-wire'), r);
+
+  $('in-btn').disabled = false;
+  $('in-msg').textContent = '';
+
+  if (!r.ok) {
+    let extra = '';
+    if (r.status === 503) {
+      extra = `<div class="note">계획 모델이 설정되지 않았습니다. <code>AIAPP_LLM_API_KEY</code> 를 주면
+        이 경로가 열립니다. <b>나머지 엔드포인트는 이것과 무관하게 전부 동작합니다</b> -
+        모델이 없다고 서비스가 안 뜨지는 않습니다.</div>`;
+    }
+    $('in-result').innerHTML = failNote(r) + extra;
+    return;
+  }
+
+  const d = r.data || {};
+  const steps = d.steps || [];
+  $('in-result').innerHTML = `
+    <div class="stat" style="margin-bottom:12px">
+      <div class="k">에이전트의 답 · ${esc(d.runId || '')}</div>
+      <div class="v sm">${esc(d.answer || '')}</div>
+    </div>
+    ${steps.length ? `<table>
+      <tr><th style="width:34px">#</th><th>도구</th><th style="width:96px">등급</th>
+          <th style="width:86px">실행</th><th>인자</th></tr>
+      ${steps.map((s, i) => `<tr>
+        <td>${i + 1}</td>
+        <td class="mono" style="font-size:12px">${esc(s.name || s.tool || '')}</td>
+        <td><span class="b b-${esc(s.grade || 'mut')}">${esc(s.grade || '?')}</span></td>
+        <td>${s.executed === false
+              ? '<span class="b b-on">막힘</span>'
+              : '<span class="b b-off">실행됨</span>'}</td>
+        <td><pre class="json" style="max-height:120px;font-size:11px">${esc(JSON.stringify(s.input ?? {}, null, 2))}</pre></td>
+      </tr>`).join('')}
+    </table>` : '<div class="empty">도구 호출이 없었습니다.</div>'}
+    ${steps.some((s) => s.executed === false)
+      ? `<div class="note warn" style="margin-top:12px"><b>게이트가 막은 호출이 있습니다.</b>
+         무엇을 하려 했는지는 그대로 기록에 남습니다.</div>` : ''}`;
+}
+
+/* ---------- 배포 ---------- */
+function fillAppSelect() {
+  const sel = $('dp-app');
+  if (!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = APPS.map((a) =>
+    `<option value="${esc(a.id)}">${esc(a.name)} (${esc(a.id)})</option>`).join('');
+  if (keep) sel.value = keep;
+}
+
+async function loadDeployPage() {
+  if (!APPS.length) await loadCatalog();
+  fillAppSelect();
+  // The listing runs on open so that a missing platform shows up here rather
+  // than after a click that looks like it should have worked.
+  loadDeployments();
+}
+
+async function runPlan() {
+  const ns = $('dp-ns').value || 'default';
+  const body = { appId: $('dp-app').value, infraName: $('dp-name').value };
+
+  $('dp-plan-msg').textContent = '부르는 중...';
+  const r = await api('POST', `/ns/${encodeURIComponent(ns)}/deployments/plan`, body);
+  wire($('dp-plan-wire'), r);
+  $('dp-plan-msg').textContent = '';
+
+  if (!r.ok) { $('dp-plan-out').innerHTML = failNote(r) + platformNote(r); return; }
+
+  const p = r.data || {};
+  $('dp-plan-out').innerHTML = `
+    <div class="grid g3">
+      <div class="stat"><div class="k">스펙</div><div class="v sm mono">${esc(p.specId || p.spec?.id || '-')}</div></div>
+      <div class="stat"><div class="k">이미지</div><div class="v sm mono">${esc(p.imageId || p.image?.id || '-')}</div></div>
+      <div class="stat"><div class="k">시간당 비용</div><div class="v sm">${esc(p.estimatedCost || p.cost || '-')}</div></div>
+    </div>
+    <div class="note" style="margin-top:12px">클라우드에 <b>아무것도 만들지 않았습니다.</b>
+      계획만 세운 것이고 전체 응답은 아래 접이식에서 볼 수 있습니다.</div>`;
+}
+
+async function runSpecs() {
+  const appId = $('dp-app').value;
+  if (!appId) return;
+
+  const r = await api('GET', '/apps/' + encodeURIComponent(appId) + '/specs');
+  wire($('dp-spec-wire'), r);
+
+  if (!r.ok) { $('dp-spec-out').innerHTML = failNote(r) + platformNote(r); return; }
+
+  const rows = Array.isArray(r.data) ? r.data : (r.data && r.data.specs) || [];
+  if (!rows.length) { $('dp-spec-out').innerHTML = '<div class="empty">조건에 맞는 스펙이 없습니다.</div>'; return; }
+
+  $('dp-spec-out').innerHTML = `<table>
+    <tr><th>스펙</th><th>가속기</th><th>vCPU / 메모리</th><th>시간당</th></tr>
+    ${rows.map((s) => `<tr>
+      <td class="mono" style="font-size:12px">${esc(s.id || s.specId || '')}</td>
+      <td>${esc(s.acceleratorModel || s.acceleratorType || '-')}
+          ${s.acceleratorCount ? ` x${esc(s.acceleratorCount)}` : ''}
+          ${s.acceleratorMemoryGB ? ` · ${esc(s.acceleratorMemoryGB)}GB` : ''}</td>
+      <td>${esc(s.vCPU || '-')} / ${esc(s.memoryGiB || '-')}GiB</td>
+      <td>${esc(s.costPerHour ?? s.cost ?? '-')}</td>
+    </tr>`).join('')}
+  </table>
+  <div class="note" style="margin-top:12px">
+    <b>요청에 CSP 이름이 없습니다.</b> 응용이 말한 가속기 조건만 보냈고, 어느 클라우드의 어느
+    인스턴스가 나올지는 결과입니다.</div>`;
+}
+
+async function loadDeployments() {
+  const ns = $('dp-ns').value || 'default';
+  $('dp-list-msg').textContent = '부르는 중...';
+
+  const r = await api('GET', `/ns/${encodeURIComponent(ns)}/deployments`);
+  wire($('dp-list-wire'), r);
+  $('dp-list-msg').textContent = '';
+
+  if (!r.ok) { $('dp-list').innerHTML = failNote(r) + platformNote(r); return; }
+
+  const rows = (r.data && (r.data.deployments || r.data.records)) || (Array.isArray(r.data) ? r.data : []);
+  if (!rows.length) { $('dp-list').innerHTML = '<div class="empty">배포가 없습니다.</div>'; return; }
+
+  $('dp-list').innerHTML = `<table>
+    <tr><th>이름</th><th>상태</th><th>응용</th></tr>
+    ${rows.map((d) => `<tr>
+      <td class="mono" style="font-size:12px">${esc(d.infraId || d.id || d.name || '')}</td>
+      <td>${esc(d.status || '-')}</td>
+      <td>${esc(d.appId || '-')}</td>
+    </tr>`).join('')}</table>`;
+}
+
+async function runProbe() {
+  const ns = $('dp-ns').value || 'default';
+  const infra = $('dp-infra').value;
+  if (!infra) { $('dp-probe-out').innerHTML = '<div class="note">배포 이름을 넣어 주세요.</div>'; return; }
+
+  $('dp-probe-out').innerHTML = '<div class="spin">노드에 묻는 중...</div>';
+  const r = await api('GET',
+    `/ns/${encodeURIComponent(ns)}/deployments/${encodeURIComponent(infra)}/accelerator`);
+  wire($('dp-probe-wire'), r);
+
+  if (!r.ok) { $('dp-probe-out').innerHTML = failNote(r) + platformNote(r); return; }
+
+  const p = r.data || {};
+  const devs = p.devices || [];
+  $('dp-probe-out').innerHTML = `
+    <div class="grid g3">
+      <div class="stat"><div class="k">모드</div><div class="v sm">${esc(p.mode || '-')}</div></div>
+      <div class="stat"><div class="k">답한 출처</div><div class="v sm mono">${esc((p.sources || []).join(', ') || '-')}</div></div>
+      <div class="stat"><div class="k">장치</div><div class="v">${devs.length}</div></div>
+    </div>
+    ${devs.length ? `<table style="margin-top:12px">
+      <tr><th>장치</th><th>종류</th><th>출처</th><th>메모리</th><th>커널 드라이버</th></tr>
+      ${devs.map((d) => `<tr>
+        <td><b>${esc(d.name || '(이름 없음)')}</b>
+            <div class="id">${esc(d.pciBusId || '')}</div></td>
+        <td><span class="b b-${esc(d.kind || 'mut')}">${esc((d.kind || '?').toUpperCase())}</span>
+            ${d.virtualFunction ? '<span class="b b-mut">VF</span>' : ''}</td>
+        <td class="mono" style="font-size:11.5px">${esc(d.source || '-')}</td>
+        <td>${d.memoryKnown ? esc(d.memoryMiB) + ' MiB'
+              : '<span class="b b-mut">모름</span>'}</td>
+        <td class="mono" style="font-size:11.5px">${d.kernelDriver
+              ? esc(d.kernelDriver) : '<span class="b b-on">안 붙음</span>'}</td>
+      </tr>`).join('')}
+    </table>` : ''}
+    ${(p.findings || []).length ? `<div class="note warn" style="margin-top:12px">
+      <b>대조 결과</b><ul style="margin:6px 0 0;padding-left:18px">
+      ${p.findings.map((f) => `<li>${esc(f)}</li>`).join('')}</ul>
+      <div style="margin-top:8px;font-size:12px">알림이지 오류가 아닙니다. 노드는 이미 떠서 과금 중이므로,
+      배포를 무르는 것보다 무엇이 다른지 알려 주는 편이 낫습니다.</div></div>` : ''}
+    <div class="note" style="margin-top:12px">
+      <b>메모리의 "모름" 은 0 이 아닙니다.</b> PCI 버스는 장치가 무엇인지는 말해도 메모리는 말하지 않습니다.
+      0 으로 적으면 측정값으로 읽히기 때문에 비워 둡니다.</div>`;
+}
+
+/* The deployment path is the only one that needs the platform, so a failure
+   there gets one line of context. It is added next to the server's own message,
+   never instead of it. */
+function platformNote(r) {
+  if (r.transport) return '';
+  return `<div class="note info">
+    이 경로는 <b>이종 클라우드 관리 계층(CB-Tumblebug)</b> 에 닿아야 동작합니다.
+    붙어 있지 않으면 위와 같이 실패하고, 그것을 감추지 않는 것이 이 화면의 방침입니다.
+    <code>AIAPP_TUMBLEBUG_BASE_URL</code> 을 주면 열립니다.</div>`;
+}
+
+/* ---------- 아카이브 ---------- */
+async function loadArchive() {
+  const r = await api('GET', '/archive');
+  wire($('ar-wire'), r);
+
+  if (!r.ok) { $('ar-list').innerHTML = failNote(r); return; }
+
+  const rows = (r.data && r.data.records) || [];
+  $('ar-count').textContent = rows.length + ' 건';
+
+  if (!rows.length) {
+    $('ar-list').innerHTML = `<div class="empty">아직 기록이 없습니다.
+      자연어 지시를 실행하거나 배포를 부르면 여기에 쌓입니다.</div>`;
+    return;
+  }
+
+  $('ar-list').innerHTML = `<table>
+    <tr><th style="width:190px">실행 ID</th><th style="width:96px">종류</th>
+        <th>지시 / 대상</th><th style="width:150px">시각</th></tr>
+    ${rows.map((x) => `<tr class="click" onclick="showRun('${esc(x.runId || x.id || '')}')">
+      <td class="mono" style="font-size:12px">${esc(x.runId || x.id || '')}</td>
+      <td><span class="b b-mut">${esc(x.kind || '-')}</span></td>
+      <td>${esc(x.intent || x.infraName || x.appId || '')}</td>
+      <td style="font-size:12px;color:var(--ink-3)">${esc(x.startedAt || x.at || '')}</td>
+    </tr>`).join('')}</table>`;
+}
+
+async function showRun(id) {
+  if (!id) return;
+  const r = await api('GET', '/archive/' + encodeURIComponent(id));
+  $('ar-detail-panel').style.display = '';
+  $('ar-detail-id').textContent = id;
+  $('ar-detail').textContent = r.data ? JSON.stringify(r.data, null, 2) : r.raw;
+  wire($('ar-detail-wire'), r);
+  $('ar-detail-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/* ---------- boot ---------- */
+resetNewApp();
+const start = (location.hash || '#overview').slice(1);
+show(loaders.hasOwnProperty(start) ? start : 'overview');
+</script>
+</body>
+</html>

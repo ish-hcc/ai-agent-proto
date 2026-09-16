@@ -384,6 +384,7 @@ run-dl3xxm60p7x7  intent   Llama 3.1 8B 추론 서버를 GPU 한 장짜리 노�
 
 | 메서드 | 경로 | 하는 일 |
 |---|---|---|
+| GET | `/aiapp/ui` | **운영자 콘솔** (이 서비스의 API 를 실제로 호출하는 화면) |
 | GET | `/aiapp/readyz` | 준비 상태 |
 | GET | `/aiapp/apps` | 등록된 AI 응용 목록 |
 | POST | `/aiapp/apps` | AI 응용 등록 (같은 id 면 새 버전으로 교체) |
@@ -409,6 +410,7 @@ run-dl3xxm60p7x7  intent   Llama 3.1 8B 추론 서버를 GPU 한 장짜리 노�
 
 ```sh
 make run
+open http://localhost:8090/aiapp/ui
 ```
 
 **끝입니다.** env 파일을 만들 필요가 없습니다. 모든 설정에 기본값이 있습니다.
@@ -424,6 +426,7 @@ INF Starting server port=8090 basePath=/aiapp model=claude-opus-5 tools=13
 이 상태에서 **클라우드에 닿지 않는 것은 전부 동작합니다.**
 
 ```sh
+open http://localhost:8090/aiapp/ui                       # 운영자 콘솔 (아래 9-5)
 curl localhost:8090/aiapp/readyz                          # {"message":"Service is ready"}
 curl localhost:8090/aiapp/apps                            # 등록된 응용 3건
 curl -G localhost:8090/aiapp/apps/search      --data-urlencode "q=라마 추론서버"                     # 후보 순위 + 판정 근거
@@ -496,6 +499,41 @@ make verify     # gofmt + go build + go test + golangci-lint
 make test       # go test ./...
 make swag       # Swagger 재생성
 ```
+
+### 9-5. 운영자 콘솔
+
+```
+http://localhost:8090/aiapp/ui
+```
+
+**이 서비스의 API 를 실제로 호출하는 화면입니다.** 녹화본이나 예시 데이터가 아니라,
+지금 이 서버가 돌려준 응답을 그립니다.
+
+| 화면 | 부르는 것 | 무엇을 보여주나 |
+|---|---|---|
+| 개요 | `GET /readyz` · `/tools` | 준비 상태, **dry-run 게이트**, 도구 13개의 등급 분포 |
+| 응용 카탈로그 | `GET/POST/DELETE /apps` | 메타데이터 규격을 실물로. 등록·삭제가 실제로 됩니다 |
+| **자연어 매칭** | `GET /apps/search?q=` | **가장 볼 만한 화면.** 후보 순위와 **왜 골랐는지**(`alias:라마`) |
+| 도구와 게이트 | `GET /tools` | 등급별 분류, 입력 스키마, 게이트에 걸리는 것 |
+| 자연어 지시 | `POST /ns/{ns}/intents` | 에이전트가 고른 도구와 **게이트가 막았는지** |
+| 배포와 라이프사이클 | `plan` · `specs` · `deployments` · `accelerator` | 계획·스펙 추천·가속기 판독 |
+| 아카이브 | `GET /archive` | 실행 기록 |
+
+설계에서 지킨 것 넷입니다.
+
+- **모든 패널에 그 화면이 부른 요청과 받은 응답 원문을 접이식으로 답니다.** 콘솔이 무엇도
+  덧붙이지 않는다는 것을 확인할 수 있게 하려는 것입니다.
+- **실패를 감추지 않습니다.** 서버가 낸 메시지를 그대로 보여 주고, 콘솔이 지어낸 문구로
+  바꾸지 않습니다. 이종 클라우드 관리 계층이 안 붙어 있으면 배포 화면은
+  `HTTP 500 Deployment lookup failed` 를 그대로 띄웁니다. **그것도 동작의 일부입니다.**
+- **쓰기 버튼을 넣지 않았습니다.** 실제 생성·제어·삭제 버튼이 없습니다. dry-run 이 켜져 있어도
+  마찬가지입니다. 되돌릴 수 없고 과금되는 행동을 화면의 버튼 하나에 걸지 않는 것이
+  이 프로토타입의 안전장치와 같은 취지입니다. 카탈로그 등록·삭제(메모리)만 예외입니다.
+- **외부 리소스를 하나도 안 씁니다.** CDN·폰트·스크립트 전부 없어서 망이 끊긴 곳에서도
+  그대로 뜹니다. 페이지는 `//go:embed` 로 바이너리에 들어가므로 컨테이너에도 볼륨이 필요 없습니다.
+
+콘솔은 API 와 **같은 오리진**에서 서빙됩니다. 인증이 아직 없는 API 에 CORS 정책을 여는 것보다,
+페이지를 같은 자리에서 내보내는 쪽이 낫다고 판단했습니다.
 
 ### 설정
 

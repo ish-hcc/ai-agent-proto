@@ -1281,4 +1281,18 @@ paths:
       summary: List agent tools
       tags:
       - '[Agent] AI Application Automation Agent'
+  /ui:
+    get:
+      description: Serve the single page console that calls this service's own API
+      operationId: GetConsole
+      produces:
+      - text/html
+      responses:
+        "200":
+          description: The console page
+          schema:
+            type: string
+      summary: Open the operator console
+      tags:
+      - '[Console] Operator Console'
 swagger: "2.0"

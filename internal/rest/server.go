@@ -52,6 +52,10 @@ func NewServer(cfg *config.Config, deps Dependencies) *Server {
 	g.GET("/readyz", RestGetReadyz)
 	g.GET("/api/*", echoSwagger.WrapHandler)
 
+	// The operator console, served from this origin so that it can call the
+	// routes below without a CORS policy on an API that has no authentication.
+	g.GET("/ui", RestGetConsole)
+
 	// AI application catalog: the metadata specification, as a live surface.
 	g.GET("/apps", handler.RestGetAllApps)
 	g.POST("/apps", handler.RestPostApp)

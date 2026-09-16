@@ -824,6 +824,27 @@
                     }
                 }
             }
+        },
+        "/ui": {
+            "get": {
+                "description": "Serve the single page console that calls this service's own API",
+                "produces": [
+                    "text/html"
+                ],
+                "tags": [
+                    "[Console] Operator Console"
+                ],
+                "summary": "Open the operator console",
+                "operationId": "GetConsole",
+                "responses": {
+                    "200": {
+                        "description": "The console page",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
