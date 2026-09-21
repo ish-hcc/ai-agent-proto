@@ -1,6 +1,8 @@
 package deploy
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -308,26 +310,6 @@ func TestParseNPUTableReadsBusAndMemory(t *testing.T) {
 	}
 }
 
-func TestParseROCmReadsColumnsByName(t *testing.T) {
-	section := "device,Card series,Card vendor,VRAM Total Memory (B),Driver version,PCI Bus\n" +
-		"card0,Vega 20,Advanced Micro Devices,17163091968,6.7.0,0000:00:1E.0\n"
-
-	devices := parseROCm(section)
-	if len(devices) != 1 {
-		t.Fatalf("got %d devices, want 1", len(devices))
-	}
-	d := devices[0]
-	if d.Name != "Vega 20" || d.DriverVersion != "6.7.0" {
-		t.Errorf("device = %+v", d)
-	}
-	if !d.MemoryKnown || d.MemoryMiB != 16368 {
-		t.Errorf("memory = (%v,%d), want bytes converted to MiB", d.MemoryKnown, d.MemoryMiB)
-	}
-	if d.PCIBusID != "0000:00:1e.0" {
-		t.Errorf("pciBusId = %q, want normalised", d.PCIBusID)
-	}
-}
-
 func TestAcceleratorModeMIGWins(t *testing.T) {
 	devices := parseNVIDIA(
 		"0, GPU-a, NVIDIA A100, 81920, 570.1, Disabled, 00000000:01:00.0\n" +
@@ -363,36 +345,6 @@ func containsSubstring(findings []string, want string) bool {
 		}
 	}
 	return false
-}
-
-// The vendor name carries a comma on some backends, so the tool quotes it.
-// AMD's own CLI tests read their CSV with a real reader for exactly this
-// reason, noting "vendor_name carries a comma on some backends, so honour the
-// quoting" (ROCm/rocm-systems, projects/amdsmi/tests/python/cli/test_static.py).
-//
-// Splitting on every comma does not fail here, it shifts every later column by
-// one: the byte count lands in the driver version, the driver version lands in
-// the bus address, and the bus address is what the PCI join runs on, so the one
-// card gets reported twice.
-func TestParseROCmHonoursQuotedFields(t *testing.T) {
-	section := "device,Card series,Card vendor,VRAM Total Memory (B),Driver version,PCI Bus\n" +
-		`card0,Vega 20,"Advanced Micro Devices, Inc.",17163091968,6.7.0,0000:00:1E.0` + "\n"
-
-	devices := parseROCm(section)
-	if len(devices) != 1 {
-		t.Fatalf("got %d devices, want 1", len(devices))
-	}
-
-	d := devices[0]
-	if d.DriverVersion != "6.7.0" {
-		t.Errorf("driverVersion = %q, want 6.7.0: a shifted column puts the byte count here", d.DriverVersion)
-	}
-	if d.PCIBusID != "0000:00:1e.0" {
-		t.Errorf("pciBusId = %q, want 0000:00:1e.0: without it the PCI join fails and the card doubles", d.PCIBusID)
-	}
-	if !d.MemoryKnown || d.MemoryMiB != 16368 {
-		t.Errorf("memory = (%v,%d), want known and 16368 MiB", d.MemoryKnown, d.MemoryMiB)
-	}
 }
 
 // nvidia-smi writes a space after each comma and quotes nothing, so the reader
@@ -476,8 +428,8 @@ func TestAMDSMIWinsOverROCmSMI(t *testing.T) {
 	stdout := sectionMarker + sectionPCI + "===\n" +
 		"0000:0c:00.0 0x030000 0x1002 0x74a1 amdgpu -\n" +
 		sectionMarker + sectionROCm + "===\n" +
-		"device,Card series,VRAM Total Memory (B),Driver version,PCI Bus\n" +
-		"card0,Instinct,137438953472,6.7.0,0000:0C:00.0\n" +
+		`{"card0":{"Card Series":"Instinct","PCI Bus":"0000:0C:00.0",` +
+		`"VRAM Total Memory (B)":"137438953472"},"system":{"Driver version":"6.7.0"}}` + "\n" +
 		sectionMarker + sectionAMDSMI + "===\n" +
 		`{"gpu_data":[{"asic":{"market_name":"Instinct MI300X"},"bus":{"bdf":"0000:0C:00.0"},` +
 		`"vram":{"size":{"value":196608,"unit":"MB"}},"driver":{"version":"6.10.5"}}]}` + "\n" +
@@ -545,5 +497,174 @@ func TestAMDDeviceTableIsPopulated(t *testing.T) {
 	}
 	if got := amdDeviceNames[0x744c]; got != "Navi31 (gfx1100)" {
 		t.Errorf("0x744c = %q, want the Navi31 label", got)
+	}
+}
+
+// rocmFixture reads one of the captures in testdata. They are real
+// `rocm-smi --json` output from AMD hardware, which this tree has none of, so
+// they are the only thing that can tell this parser it works.
+func rocmFixture(t *testing.T, name string) string {
+	t.Helper()
+
+	body, err := os.ReadFile(filepath.Join("testdata", "rocm-smi", name))
+	if err != nil {
+		t.Fatalf("cannot read fixture: %v", err)
+	}
+
+	return string(body)
+}
+
+// Every capture has to yield its cards, with the four fields that matter, on
+// every ROCm release represented. The expected values are read back out of the
+// fixture itself only where they are version dependent; the counts and the
+// shapes are written out, so a parser that quietly returns nothing fails here.
+func TestParseROCmAgainstRealCaptures(t *testing.T) {
+	tests := []struct {
+		file      string
+		wantCards int
+		wantName  string
+		wantBus   string
+		wantMiB   int
+	}{
+		{"mi100_rocm571.json", 6, "Arcturus GL-XL [Instinct MI100]", "0000:1e:00.0", 32752},
+		{"mi100_rocm602.json", 4, "Arcturus GL-XL [Instinct MI100]", "0000:83:00.0", 32752},
+		// 4.30 had no name to give and put the vendor id in the field instead.
+		{"rx6700xt_rocm430.json", 1, "", "0000:07:00.0", 12272},
+		{"rx6700xt_rocm571.json", 1, "Navi 22 [Radeon RX 6700/6700 XT / 6800M]", "0000:07:00.0", 12272},
+		{"rx6700xt_rocm602.json", 1, "Navi 22 [Radeon RX 6700/6700 XT / 6800M]", "0000:07:00.0", 12272},
+		{"rx6700xt_rocm612.json", 1, "Navi 22 [Radeon RX 6700/6700 XT / 6800M]", "0000:07:00.0", 12272},
+		// This capture carries only Card Model, and its value is a hex id.
+		{"vega-10-XT.json", 1, "", "0000:04:00.0", 16368},
+		{"vega-20-WKS-GL-XE.json", 1, "Radeon Instinct MI50 32GB", "0000:63:00.0", 32752},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.file, func(t *testing.T) {
+			devices := parseROCm(rocmFixture(t, tc.file))
+
+			if len(devices) != tc.wantCards {
+				t.Fatalf("got %d cards, want %d", len(devices), tc.wantCards)
+			}
+
+			first := devices[0]
+			if first.Vendor != "amd" || first.Kind != kindGPU || first.Source != sectionROCm {
+				t.Errorf("vendor/kind/source = %q/%q/%q", first.Vendor, first.Kind, first.Source)
+			}
+			if first.Name != tc.wantName {
+				t.Errorf("name = %q, want %q", first.Name, tc.wantName)
+			}
+			if first.PCIBusID != tc.wantBus {
+				t.Errorf("pciBusId = %q, want %q", first.PCIBusID, tc.wantBus)
+			}
+			if !first.MemoryKnown || first.MemoryMiB != tc.wantMiB {
+				t.Errorf("memory = (%v,%d), want known and %d MiB", first.MemoryKnown, first.MemoryMiB, tc.wantMiB)
+			}
+			// Every capture carries the driver version in its system section.
+			if first.DriverVersion == "" {
+				t.Error("driverVersion is empty: it lives in the system section, not on the card")
+			}
+			// The cards must come back in bus order, not in map order.
+			for i, d := range devices {
+				if d.Index != i {
+					t.Errorf("device %d has index %d: card keys sort numerically", i, d.Index)
+				}
+			}
+		})
+	}
+}
+
+// A consumer card reports "N/A" for its unique id and a datacenter card reports
+// a real one. N/A must not survive as a value: it would become a device
+// identity that every such card shares.
+func TestParseROCmDropsNotAvailableUniqueID(t *testing.T) {
+	consumer := parseROCm(rocmFixture(t, "rx6700xt_rocm612.json"))
+	if len(consumer) != 1 {
+		t.Fatalf("got %d cards, want 1", len(consumer))
+	}
+	if consumer[0].UUID != "" {
+		t.Errorf("uuid = %q, want empty: the capture says N/A", consumer[0].UUID)
+	}
+
+	datacenter := parseROCm(rocmFixture(t, "mi100_rocm602.json"))
+	if len(datacenter) == 0 || datacenter[0].UUID == "" {
+		t.Error("the MI100 capture carries a real unique id and it must survive")
+	}
+}
+
+// The key renames are the thing most likely to break silently on a new release,
+// so they are pinned against the captures that bracket each one.
+func TestParseROCmSurvivesKeyRenames(t *testing.T) {
+	// 5.7.1 spells it "GPU ID" and "Card series"; 6.1.2 spells them
+	// "Device ID", "Card Series" and adds "Device Name".
+	older := parseROCm(rocmFixture(t, "rx6700xt_rocm571.json"))
+	newer := parseROCm(rocmFixture(t, "rx6700xt_rocm612.json"))
+
+	if len(older) != 1 || len(newer) != 1 {
+		t.Fatalf("got %d and %d cards, want 1 each", len(older), len(newer))
+	}
+	if older[0].Name == "" || newer[0].Name == "" {
+		t.Errorf("names = %q and %q, want both filled across the rename", older[0].Name, newer[0].Name)
+	}
+	if older[0].PCIBusID != newer[0].PCIBusID {
+		t.Errorf("bus = %q and %q, want the same card seen twice", older[0].PCIBusID, newer[0].PCIBusID)
+	}
+}
+
+// This is why a hex identifier is refused as a name. The Vega capture is real
+// output whose only name key holds "0xc1e", and the card sits at the bus
+// address that 0x687f, a Vega10 in AMD's table, occupies here. Letting the tool
+// overwrite the architecture with its own hex string would make the reading
+// worse than the bus alone, which is the opposite of what the merge is for.
+func TestROCmHexNameDoesNotOverwriteThePCIName(t *testing.T) {
+	stdout := sectionMarker + sectionPCI + "===\n" +
+		"0000:04:00.0 0x030000 0x1002 0x687f amdgpu -\n" +
+		sectionMarker + sectionROCm + "===\n" +
+		rocmFixture(t, "vega-10-XT.json") +
+		sectionMarker + "end===\n"
+
+	devices, _ := readNodeAccelerators(stdout)
+	if len(devices) != 1 {
+		t.Fatalf("got %d devices, want 1: one card seen by the bus and the tool", len(devices))
+	}
+
+	d := devices[0]
+	if d.Name != "Vega10 (gfx900)" {
+		t.Errorf("name = %q, want the architecture the bus named", d.Name)
+	}
+	// The tool still wins where it actually has something: memory and identity.
+	if !d.MemoryKnown || d.MemoryMiB != 16368 {
+		t.Errorf("memory = (%v,%d), want the tool's reading", d.MemoryKnown, d.MemoryMiB)
+	}
+	if d.UUID != "0x2150e7d042a1124" {
+		t.Errorf("uuid = %q, want the tool's unique id", d.UUID)
+	}
+	if d.Source != sectionROCm {
+		t.Errorf("source = %q, want the tool to be credited for the reading", d.Source)
+	}
+}
+
+// rocm-smi's JSON does not end in a newline, so on a node the next marker lands
+// on its closing brace. Read naively that line is neither a marker nor useful
+// body, and both sections are lost: the tool's output becomes unparseable and
+// everything after it is filed under the wrong section.
+func TestSplitProbeSectionsRecoversAGluedMarker(t *testing.T) {
+	stdout := sectionMarker + sectionROCm + "===\n" +
+		`{"card0":{"PCI Bus":"0000:04:00.0"}}` + sectionMarker + sectionRBLN + "===\n" +
+		"0  RBLN-CA22  rbln0  0000:51:00.0  41C  38W  0.00/15.62 GiB  0%\n" +
+		sectionMarker + "end===\n"
+
+	sections := splitProbeSections(stdout)
+
+	if !strings.Contains(sections[sectionROCm], `"card0"`) {
+		t.Errorf("rocm section = %q, want the JSON that preceded the marker", sections[sectionROCm])
+	}
+	if strings.Contains(sections[sectionROCm], sectionMarker) {
+		t.Error("the marker must not survive inside the section body")
+	}
+	if !strings.Contains(sections[sectionRBLN], "RBLN-CA22") {
+		t.Errorf("rbln section = %q, want the line after the glued marker", sections[sectionRBLN])
+	}
+	if len(parseROCm(sections[sectionROCm])) != 1 {
+		t.Error("the recovered section has to parse")
 	}
 }

@@ -42,8 +42,14 @@ const sectionMarker = "===AIAPP-PROBE "
 //
 // Every vendor section is guarded by command -v and has its stderr dropped, so a
 // node carrying one vendor's tooling does not fail the probe for the others.
+//
+// A newline is printed before each marker because not every tool ends its
+// output with one: rocm-smi's JSON does not, and without this the next marker
+// lands on the closing brace, the section boundary disappears and both sections
+// are lost. The parser guards against the same thing, since the shell is not
+// the only way output reaches it.
 const acceleratorProbeCommand = `
-echo "` + sectionMarker + sectionPCI + `==="
+printf '\n' ; echo "` + sectionMarker + sectionPCI + `==="
 for d in /sys/bus/pci/devices/*; do
   [ -r "$d/class" ] || continue
   cls=$(cat "$d/class" 2>/dev/null)
@@ -54,26 +60,26 @@ for d in /sys/bus/pci/devices/*; do
   if [ -e "$d/physfn" ]; then pf="vf"; fi
   echo "$(basename "$d") $cls $(cat "$d/vendor" 2>/dev/null) $(cat "$d/device" 2>/dev/null) $drv $pf"
 done 2>/dev/null
-echo "` + sectionMarker + sectionNVIDIA + `==="
+printf '\n' ; echo "` + sectionMarker + sectionNVIDIA + `==="
 command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi \
   --query-gpu=index,uuid,name,memory.total,driver_version,mig.mode.current,pci.bus_id \
   --format=csv,noheader,nounits 2>/dev/null
-echo "` + sectionMarker + sectionAMDSMI + `==="
+printf '\n' ; echo "` + sectionMarker + sectionAMDSMI + `==="
 command -v amd-smi >/dev/null 2>&1 && amd-smi static \
   --asic --bus --vram --driver --json 2>/dev/null
-echo "` + sectionMarker + sectionROCm + `==="
+printf '\n' ; echo "` + sectionMarker + sectionROCm + `==="
 command -v rocm-smi >/dev/null 2>&1 && rocm-smi \
-  --showid --showproductname --showmeminfo vram --showdriverversion --showbus --csv 2>/dev/null
-echo "` + sectionMarker + sectionRBLN + `==="
+  --showid --showproductname --showmeminfo vram --showdriverversion --showbus --json 2>/dev/null
+printf '\n' ; echo "` + sectionMarker + sectionRBLN + `==="
 command -v rbln-stat >/dev/null 2>&1 && rbln-stat 2>/dev/null
-echo "` + sectionMarker + sectionFuriosa + `==="
+printf '\n' ; echo "` + sectionMarker + sectionFuriosa + `==="
 command -v furiosa-smi >/dev/null 2>&1 && furiosa-smi info 2>/dev/null
-echo "` + sectionMarker + sectionHL + `==="
+printf '\n' ; echo "` + sectionMarker + sectionHL + `==="
 command -v hl-smi >/dev/null 2>&1 && hl-smi \
   -Q index,uuid,name,memory.total,driver_version,bus_id -f csv,noheader,nounits 2>/dev/null
-echo "` + sectionMarker + sectionTPU + `==="
+printf '\n' ; echo "` + sectionMarker + sectionTPU + `==="
 command -v tpu-info >/dev/null 2>&1 && tpu-info 2>/dev/null
-echo "` + sectionMarker + `end==="
+printf '\n' ; echo "` + sectionMarker + `end==="
 `
 
 // splitProbeSections cuts the probe output into its sections.
@@ -105,10 +111,20 @@ func splitProbeSections(stdout string) map[string]string {
 	}
 
 	for _, line := range strings.Split(stdout, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, sectionMarker) && strings.HasSuffix(trimmed, "===") {
+		// The marker is looked for anywhere in the line, not only at its start:
+		// a tool whose output does not end in a newline leaves the next marker
+		// glued to its last character, and treating that line as ordinary body
+		// would swallow the boundary and merge two sections into one.
+		at := strings.Index(line, sectionMarker)
+		if at >= 0 && strings.HasSuffix(strings.TrimSpace(line), "===") {
+			if current != "" && at > 0 {
+				body.WriteString(line[:at])
+				body.WriteString("\n")
+			}
 			flush()
-			current = strings.TrimSuffix(strings.TrimPrefix(trimmed, sectionMarker), "===")
+			name := strings.TrimSpace(line[at:])
+			current = strings.TrimSuffix(strings.TrimPrefix(name, sectionMarker), "===")
+
 			continue
 		}
 		if current == "" {

@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -112,58 +113,92 @@ func parseHLSMI(section string) []model.AcceleratorDevice {
 	return devices
 }
 
-// parseROCm reads rocm-smi --csv.
+// rocmCardPattern matches the keys rocm-smi uses for each card in its JSON.
+// Everything else at the top level is a section, and "system" is the one that
+// carries the driver version.
+var rocmCardPattern = regexp.MustCompile(`^card(\d+)$`)
+
+// rocm-smi labels its JSON keys with the strings it prints in table mode, and
+// it has renamed them across releases: "GPU ID" became "Device ID" in 6.02,
+// and 6.12 both recased "Card series" to "Card Series" and added "Device Name".
+// Lookups are case insensitive, so only genuine renames need an entry here,
+// listed in the order they should be preferred.
+var (
+	rocmNameKeys     = []string{"device name", "card series", "card model", "card sku"}
+	rocmUniqueIDKeys = []string{"unique id", "guid"}
+	rocmBusKeys      = []string{"pci bus"}
+	rocmVRAMKeys     = []string{"vram total memory (b)"}
+	rocmDriverKeys   = []string{"driver version"}
+)
+
+// parseROCm reads `rocm-smi ... --json`.
 //
-// Columns are looked up by header name rather than by position: rocm-smi changes
-// both the order and the wording between releases, and a positional read would
-// put a driver version in the memory field without erroring.
+// The document is an object keyed by card, plus a "system" section holding the
+// driver version, which is reported once for the host rather than per card.
+//
+// JSON rather than the CSV the same tool also offers: the CSV puts a vendor
+// name containing a comma in a quoted field, and more usefully, real captures
+// of the JSON exist to test against across four ROCm releases while none exist
+// for the CSV.
 func parseROCm(section string) []model.AcceleratorDevice {
 	devices := []model.AcceleratorDevice{}
 
-	var header []string
-	for _, line := range strings.Split(section, "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		fields := splitCSV(line)
-		if header == nil {
-			if len(fields) > 1 && strings.EqualFold(fields[0], "device") {
-				header = fields
-			}
-			continue
-		}
-		if len(fields) < 2 || !strings.HasPrefix(strings.ToLower(fields[0]), "card") {
-			continue
-		}
+	trimmed := strings.TrimSpace(section)
+	if trimmed == "" {
+		return devices
+	}
 
-		column := func(want ...string) string {
-			for i, name := range header {
-				if i >= len(fields) {
-					break
-				}
-				lowered := strings.ToLower(name)
-				for _, w := range want {
-					if strings.Contains(lowered, w) {
-						return strings.TrimSpace(fields[i])
-					}
-				}
-			}
-			return ""
+	// Every value in this document is a string, including the numbers.
+	var report map[string]map[string]string
+	if err := json.Unmarshal([]byte(trimmed), &report); err != nil {
+		return devices
+	}
+
+	driver := ""
+	if system, ok := report["system"]; ok {
+		driver = valueOrEmpty(lookupFold(system, rocmDriverKeys...))
+	}
+
+	// Card keys sort numerically, not as text: card10 comes after card9.
+	indexes := make([]int, 0, len(report))
+	byIndex := make(map[int]map[string]string, len(report))
+	for key, body := range report {
+		match := rocmCardPattern.FindStringSubmatch(strings.ToLower(key))
+		if match == nil {
+			continue
 		}
+		index, err := strconv.Atoi(match[1])
+		if err != nil {
+			continue
+		}
+		indexes = append(indexes, index)
+		byIndex[index] = body
+	}
+	sort.Ints(indexes)
+
+	for _, index := range indexes {
+		card := byIndex[index]
 
 		device := model.AcceleratorDevice{
 			Source:        sectionROCm,
 			Kind:          kindGPU,
 			Vendor:        "amd",
-			Index:         len(devices),
-			UUID:          valueOrEmpty(column("unique id", "uuid")),
-			Name:          valueOrEmpty(column("card series", "card model", "product name")),
-			DriverVersion: valueOrEmpty(column("driver version")),
-			PCIBusID:      normalizeBusID(valueOrEmpty(column("pci bus", "bus"))),
+			Index:         index,
+			Name:          valueOrEmpty(lookupFold(card, rocmNameKeys...)),
+			UUID:          valueOrEmpty(lookupFold(card, rocmUniqueIDKeys...)),
+			DriverVersion: driver,
+			PCIBusID:      normalizeBusID(valueOrEmpty(lookupFold(card, rocmBusKeys...))),
 		}
-		// rocm-smi reports VRAM in bytes, unlike every other tool here.
-		if bytes, ok := parseNumber(column("vram total memory")); ok && bytes > 0 {
+		// Older releases fill the name keys with a bare identifier rather than
+		// a name: 4.30 puts the vendor id "0x1002" in Card Series, and the Vega
+		// capture has only Card Model, "0xc1e". Passing that on would overwrite
+		// the architecture the PCI table already named the card with, so an
+		// answer that is only a hex number is treated as no answer.
+		if isHexIdentifier(device.Name) {
+			device.Name = ""
+		}
+		// rocm-smi counts VRAM in bytes, unlike every other tool here.
+		if bytes, ok := parseNumber(lookupFold(card, rocmVRAMKeys...)); ok && bytes > 0 {
 			device.MemoryMiB = int(bytes / (1024 * 1024))
 			device.MemoryKnown = true
 		}
@@ -172,6 +207,31 @@ func parseROCm(section string) []model.AcceleratorDevice {
 	}
 
 	return devices
+}
+
+// hexIdentifier matches a bare hex value, which is what rocm-smi puts in its
+// name keys when it has no name to give.
+var hexIdentifier = regexp.MustCompile(`^0x[0-9a-fA-F]+$`)
+
+func isHexIdentifier(value string) bool {
+	return hexIdentifier.MatchString(strings.TrimSpace(value))
+}
+
+// lookupFold returns the first of the wanted keys present in the section,
+// ignoring case. The keys are already lowercase at the call sites.
+func lookupFold(section map[string]string, wanted ...string) string {
+	folded := make(map[string]string, len(section))
+	for key, value := range section {
+		folded[strings.ToLower(strings.TrimSpace(key))] = value
+	}
+
+	for _, want := range wanted {
+		if value, ok := folded[want]; ok && strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+
+	return ""
 }
 
 // parseNPUTable reads the text tables the NPU tools print.
@@ -346,9 +406,10 @@ func splitCSV(line string) []string {
 
 // valueOrEmpty drops a value the driver could not report.
 func valueOrEmpty(field string) string {
-	if strings.EqualFold(field, notAvailable) || strings.EqualFold(field, "N/A ") {
+	if strings.EqualFold(field, notAvailable) {
 		return ""
 	}
+
 	return strings.TrimSpace(field)
 }
 
