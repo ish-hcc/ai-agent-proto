@@ -565,7 +565,10 @@ func parseMIGMode(field string) (bool, bool) {
 // The document is either an object holding gpu_data or a bare array; AMD's own
 // CLI tests accept both, so this does too.
 type amdSMIReport struct {
-	GPUData []amdSMIDevice `json:"gpu_data"`
+	// A pointer so that a document carrying an empty gpu_data can be told from
+	// one carrying no such key. The first is a node with no AMD card, which is
+	// an answer; the second means this is the bare array form instead.
+	GPUData *[]amdSMIDevice `json:"gpu_data"`
 }
 
 // amdSMIDevice is one GPU, split into the sections the static subcommand emits.
@@ -636,16 +639,16 @@ func parseAMDSMI(section string) []model.AcceleratorDevice {
 	}
 
 	var report amdSMIReport
-	if err := json.Unmarshal([]byte(trimmed), &report); err != nil || len(report.GPUData) == 0 {
+	if err := json.Unmarshal([]byte(trimmed), &report); err != nil || report.GPUData == nil {
 		// The bare array form.
 		var bare []amdSMIDevice
 		if err := json.Unmarshal([]byte(trimmed), &bare); err != nil {
 			return devices
 		}
-		report.GPUData = bare
+		report.GPUData = &bare
 	}
 
-	for i, gpu := range report.GPUData {
+	for i, gpu := range *report.GPUData {
 		device := model.AcceleratorDevice{
 			Source:        sectionAMDSMI,
 			Kind:          kindGPU,

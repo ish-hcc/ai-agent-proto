@@ -768,3 +768,36 @@ func TestParseROCmOnEmptySection(t *testing.T) {
 		t.Errorf("got %d devices from an empty section, want 0", len(got))
 	}
 }
+
+// amd-smi writes its cards either under gpu_data or as a bare array, and an
+// empty gpu_data is a node with no AMD card rather than a document in the
+// other shape. Telling those apart by whether the key is present, not by
+// whether it holds anything, is what keeps a cardless node from being retried
+// as an array and reported as a parse failure.
+func TestParseAMDSMIDocumentShapes(t *testing.T) {
+	card := `{"asic":{"market_name":"Instinct MI300X"},"bus":{"bdf":"0000:0C:00.0"},` +
+		`"vram":{"size":{"value":196608,"unit":"MB"}},"driver":{"version":"6.10.5"}}`
+
+	tests := []struct {
+		name    string
+		section string
+		want    int
+	}{
+		{"gpu_data object", `{"gpu_data":[` + card + `]}`, 1},
+		{"bare array", `[` + card + `]`, 1},
+		{"no card on this node", `{"gpu_data":[]}`, 0},
+		{"empty bare array", `[]`, 0},
+		{"neither shape", `{"something_else":1}`, 0},
+		{"not json at all", `amd-smi: command not found`, 0},
+		{"nothing at all", "   \n", 0},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseAMDSMI(tc.section)
+			if len(got) != tc.want {
+				t.Errorf("got %d devices, want %d", len(got), tc.want)
+			}
+		})
+	}
+}
