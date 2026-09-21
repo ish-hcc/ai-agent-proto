@@ -11,11 +11,20 @@ import (
 	"github.com/innogrid/ai-agent-proto/internal/model"
 )
 
-// notAvailable is what a driver prints for a value it cannot report.
+// notAvailable lists what a driver prints instead of a value it cannot report.
 //
-// It is not zero. Writing it down as zero reads as "idle" or "no memory", and a
-// reader cannot tell that apart from a real measurement.
-const notAvailable = "N/A"
+// None of them is zero. Writing any of them down as zero reads as "idle" or "no
+// memory", and a reader cannot tell that apart from a real measurement.
+//
+// nvidia-smi uses two spellings in the same line, which is why the bracketed
+// form is here as well as the bare one. Measured on this machine, one query
+// returned both: temperature.memory as "N/A" and mig.mode.current as "[N/A]".
+var notAvailable = []string{
+	"n/a",
+	"not supported",
+	"unknown error",
+	"insufficient permissions",
+}
 
 // bdfPattern matches a PCI address in either the four digit form sysfs writes or
 // the eight digit form nvidia-smi and the NPU tools write.
@@ -406,20 +415,38 @@ func splitCSV(line string) []string {
 
 // valueOrEmpty drops a value the driver could not report.
 func valueOrEmpty(field string) string {
-	if strings.EqualFold(field, notAvailable) {
+	if isNotAvailable(field) {
 		return ""
 	}
 
 	return strings.TrimSpace(field)
 }
 
+// isNotAvailable reports whether a field holds one of the driver's stand-ins
+// for a reading it does not have, in either the bare or the bracketed spelling.
+func isNotAvailable(field string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(field))
+	trimmed = strings.TrimSuffix(strings.TrimPrefix(trimmed, "["), "]")
+
+	if trimmed == "" {
+		return true
+	}
+	for _, sentinel := range notAvailable {
+		if trimmed == sentinel {
+			return true
+		}
+	}
+
+	return false
+}
+
 // parseNumber reads a numeric field, reporting false for one the driver could not
 // report. The caller records that as unknown rather than as zero.
 func parseNumber(field string) (float64, bool) {
-	field = strings.TrimSpace(field)
-	if strings.EqualFold(field, notAvailable) || field == "" {
+	if isNotAvailable(field) {
 		return 0, false
 	}
+	field = strings.TrimSpace(field)
 	value, err := strconv.ParseFloat(field, 64)
 	if err != nil {
 		return 0, false

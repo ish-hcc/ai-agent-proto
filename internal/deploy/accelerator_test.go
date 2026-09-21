@@ -668,3 +668,46 @@ func TestSplitProbeSectionsRecoversAGluedMarker(t *testing.T) {
 		t.Error("the recovered section has to parse")
 	}
 }
+
+// This is the line this machine's nvidia-smi actually printed for the query the
+// probe sends. It matters because the driver uses two spellings for a missing
+// value in the same output: temperature.memory came back as "N/A" while
+// mig.mode.current came back as "[N/A]", and only the bare one used to be
+// recognised. A bracketed sentinel read as a value becomes a device name of
+// "[N/A]" or a MIG state that looks answered.
+func TestParseNVIDIAObservedLineWithBracketedNotAvailable(t *testing.T) {
+	line := "0, GPU-05548171-05c7-229a-e00e-59703ed40eb0, NVIDIA GeForce GTX 1660, " +
+		"6144, 610.57.04, [N/A], 00000000:01:00.0\n"
+
+	devices := parseNVIDIA(line)
+	if len(devices) != 1 {
+		t.Fatalf("got %d devices, want 1", len(devices))
+	}
+
+	d := devices[0]
+	if d.Name != "NVIDIA GeForce GTX 1660" || d.DriverVersion != "610.57.04" {
+		t.Errorf("device = %+v", d)
+	}
+	if !d.MemoryKnown || d.MemoryMiB != 6144 {
+		t.Errorf("memory = (%v,%d), want known and 6144 MiB", d.MemoryKnown, d.MemoryMiB)
+	}
+	if d.MIGKnown {
+		t.Error("[N/A] means the card did not answer, so MIG state is not known")
+	}
+	if d.PCIBusID != "0000:01:00.0" {
+		t.Errorf("pciBusId = %q", d.PCIBusID)
+	}
+}
+
+func TestIsNotAvailableCoversBothSpellings(t *testing.T) {
+	for _, field := range []string{"N/A", "[N/A]", "n/a", " [Not Supported] ", "[Unknown Error]", ""} {
+		if !isNotAvailable(field) {
+			t.Errorf("%q should read as no value", field)
+		}
+	}
+	for _, field := range []string{"0", "Disabled", "NVIDIA L4", "6144"} {
+		if isNotAvailable(field) {
+			t.Errorf("%q is a value and must survive", field)
+		}
+	}
+}
