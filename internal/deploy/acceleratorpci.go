@@ -55,7 +55,7 @@ type pciVendor struct {
 // just carries the raw vendor ID instead of a name.
 var pciVendors = map[uint64]pciVendor{
 	0x10de: {name: "nvidia", kind: kindGPU},
-	0x1002: {name: "amd", kind: kindGPU},
+	0x1002: {name: "amd", kind: kindGPU, devices: amdDeviceNames},
 	0x8086: {name: "intel", kind: kindGPU},
 	0x1eff: {
 		name: "rebellions",

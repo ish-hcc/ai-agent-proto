@@ -497,3 +497,53 @@ func TestAMDSMIWinsOverROCmSMI(t *testing.T) {
 		t.Errorf("sources = %v, want pci, rocm-smi and amd-smi all recorded", sources)
 	}
 }
+
+// The device ids come from AMD's own table, so the two that this checks are
+// ones the fixtures in this tree also carry: 0x738c is the MI100 that ROCm's
+// enumerator files under Arcturus, and 0x74a1 is an MI300.
+func TestParsePCIInventoryNamesAMDCards(t *testing.T) {
+	tests := []struct {
+		line string
+		want string
+	}{
+		{"0000:83:00.0 0x030000 0x1002 0x738c amdgpu -", "Arcturus (gfx908)"},
+		{"0000:0c:00.0 0x030000 0x1002 0x74a1 amdgpu -", "Instinct MI300 series (gfx942)"},
+		{"0000:07:00.0 0x030000 0x1002 0x7408 amdgpu -", "Aldebaran (gfx90a)"},
+	}
+
+	for _, tc := range tests {
+		devices := parsePCIInventory(tc.line + "\n")
+		if len(devices) != 1 {
+			t.Fatalf("got %d devices for %q, want 1", len(devices), tc.line)
+		}
+		if devices[0].Name != tc.want {
+			t.Errorf("name = %q, want %q", devices[0].Name, tc.want)
+		}
+		if devices[0].Vendor != "amd" {
+			t.Errorf("vendor = %q, want amd", devices[0].Vendor)
+		}
+	}
+}
+
+// An id AMD's table does not list still has to report, with the raw identifier
+// rather than a guess, because the card is on the bus either way.
+func TestParsePCIInventoryKeepsUnlistedAMDDevice(t *testing.T) {
+	devices := parsePCIInventory("0000:07:00.0 0x030000 0x1002 0xffff amdgpu -\n")
+	if len(devices) != 1 {
+		t.Fatalf("got %d devices, want 1", len(devices))
+	}
+	if devices[0].Vendor != "amd" || devices[0].Name != "0xffff" {
+		t.Errorf("device = %+v, want vendor amd and the raw device id", devices[0])
+	}
+}
+
+// The table is reproduced from AMD's, so a count guards against a bad import
+// silently emptying it.
+func TestAMDDeviceTableIsPopulated(t *testing.T) {
+	if len(amdDeviceNames) < 200 {
+		t.Errorf("amdDeviceNames has %d entries, want the ~210 AMD publishes", len(amdDeviceNames))
+	}
+	if got := amdDeviceNames[0x744c]; got != "Navi31 (gfx1100)" {
+		t.Errorf("0x744c = %q, want the Navi31 label", got)
+	}
+}
