@@ -364,3 +364,49 @@ func containsSubstring(findings []string, want string) bool {
 	}
 	return false
 }
+
+// The vendor name carries a comma on some backends, so the tool quotes it.
+// AMD's own CLI tests read their CSV with a real reader for exactly this
+// reason, noting "vendor_name carries a comma on some backends, so honour the
+// quoting" (ROCm/rocm-systems, projects/amdsmi/tests/python/cli/test_static.py).
+//
+// Splitting on every comma does not fail here, it shifts every later column by
+// one: the byte count lands in the driver version, the driver version lands in
+// the bus address, and the bus address is what the PCI join runs on, so the one
+// card gets reported twice.
+func TestParseROCmHonoursQuotedFields(t *testing.T) {
+	section := "device,Card series,Card vendor,VRAM Total Memory (B),Driver version,PCI Bus\n" +
+		`card0,Vega 20,"Advanced Micro Devices, Inc.",17163091968,6.7.0,0000:00:1E.0` + "\n"
+
+	devices := parseROCm(section)
+	if len(devices) != 1 {
+		t.Fatalf("got %d devices, want 1", len(devices))
+	}
+
+	d := devices[0]
+	if d.DriverVersion != "6.7.0" {
+		t.Errorf("driverVersion = %q, want 6.7.0: a shifted column puts the byte count here", d.DriverVersion)
+	}
+	if d.PCIBusID != "0000:00:1e.0" {
+		t.Errorf("pciBusId = %q, want 0000:00:1e.0: without it the PCI join fails and the card doubles", d.PCIBusID)
+	}
+	if !d.MemoryKnown || d.MemoryMiB != 16368 {
+		t.Errorf("memory = (%v,%d), want known and 16368 MiB", d.MemoryKnown, d.MemoryMiB)
+	}
+}
+
+// nvidia-smi writes a space after each comma and quotes nothing, so the reader
+// has to keep working on the unquoted shape it was already reading.
+func TestSplitCSVKeepsUnquotedSpacedFields(t *testing.T) {
+	fields := splitCSV("0, GPU-abc, NVIDIA L4, 23034, 570.1, Disabled, 00000000:01:00.0")
+	want := []string{"0", "GPU-abc", "NVIDIA L4", "23034", "570.1", "Disabled", "00000000:01:00.0"}
+
+	if len(fields) != len(want) {
+		t.Fatalf("got %d fields %q, want %d", len(fields), fields, len(want))
+	}
+	for i := range want {
+		if fields[i] != want[i] {
+			t.Errorf("field %d = %q, want %q", i, fields[i], want[i])
+		}
+	}
+}

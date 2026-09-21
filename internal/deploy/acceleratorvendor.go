@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"encoding/csv"
 	"regexp"
 	"strconv"
 	"strings"
@@ -311,13 +312,35 @@ func parseLargestMemory(line string) (int, bool) {
 	return largest, true
 }
 
-// splitCSV splits a comma separated line and trims each field.
+// splitCSV reads one comma separated line the way the emitting tool wrote it.
+//
+// A field is quoted whenever it contains a comma, and at least one of these
+// tools has such a field: AMD's own CLI tests note that the vendor name carries
+// a comma on some backends and read their output with a real CSV reader for
+// that reason. Splitting on every comma instead shifts every later column by
+// one, which does not fail - it silently puts the byte count in the driver
+// version and the driver version where the bus address should be, and the bus
+// address is the key the PCI join runs on, so the card ends up reported twice.
+//
+// LazyQuotes and a free field count keep a malformed line from failing the
+// whole reading: this is an inventory of whatever answered, not a parser with a
+// schema to enforce.
 func splitCSV(line string) []string {
-	parts := strings.Split(line, ",")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
+	reader := csv.NewReader(strings.NewReader(line))
+	reader.TrimLeadingSpace = true
+	reader.LazyQuotes = true
+	reader.FieldsPerRecord = -1
+
+	fields, err := reader.Read()
+	if err != nil {
+		return nil
 	}
-	return parts
+
+	for i := range fields {
+		fields[i] = strings.TrimSpace(fields[i])
+	}
+
+	return fields
 }
 
 // valueOrEmpty drops a value the driver could not report.
