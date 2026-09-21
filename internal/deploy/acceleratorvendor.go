@@ -2,6 +2,7 @@ package deploy
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
@@ -375,5 +376,135 @@ func parseMIGMode(field string) (bool, bool) {
 		return false, true
 	default:
 		return false, false
+	}
+}
+
+// amdSMIReport is what `amd-smi static ... --json` writes.
+//
+// The document is either an object holding gpu_data or a bare array; AMD's own
+// CLI tests accept both, so this does too.
+type amdSMIReport struct {
+	GPUData []amdSMIDevice `json:"gpu_data"`
+}
+
+// amdSMIDevice is one GPU, split into the sections the static subcommand emits.
+// Only the sections the probe asks for are modelled; the rest are ignored rather
+// than rejected, so a newer amd-smi that adds a section still parses.
+type amdSMIDevice struct {
+	ASIC struct {
+		MarketName string `json:"market_name"`
+		VendorName string `json:"vendor_name"`
+		DeviceID   string `json:"device_id"`
+	} `json:"asic"`
+	Bus struct {
+		BDF string `json:"bdf"`
+	} `json:"bus"`
+	VRAM struct {
+		Size amdSMIValue `json:"size"`
+	} `json:"vram"`
+	Driver struct {
+		Version string `json:"version"`
+	} `json:"driver"`
+}
+
+// amdSMIValue is a measured field in amd-smi's JSON, which carries its unit
+// rather than being a bare number: {"value": 196608, "unit": "MB"}. A field the
+// driver could not read is the plain string "N/A" instead, so the unit and the
+// absence have to be decoded from the same position.
+type amdSMIValue struct {
+	Value   float64
+	Unit    string
+	Present bool
+}
+
+func (v *amdSMIValue) UnmarshalJSON(data []byte) error {
+	var wrapped struct {
+		Value *float64 `json:"value"`
+		Unit  string   `json:"unit"`
+	}
+	if err := json.Unmarshal(data, &wrapped); err == nil && wrapped.Value != nil {
+		v.Value, v.Unit, v.Present = *wrapped.Value, wrapped.Unit, true
+
+		return nil
+	}
+
+	// A bare number is accepted because the same key is a plain value in
+	// csv and human modes, and a caller may feed either document in.
+	var bare float64
+	if err := json.Unmarshal(data, &bare); err == nil {
+		v.Value, v.Present = bare, true
+
+		return nil
+	}
+
+	// Anything else, "N/A" included, stays absent rather than becoming zero.
+	return nil
+}
+
+// parseAMDSMI reads `amd-smi static --asic --bus --vram --driver --json`.
+//
+// amd-smi is the supported successor to rocm-smi, which takes only critical
+// fixes from ROCm 7.0 and is removed in 10.1, so this is the path a current AMD
+// node answers on.
+func parseAMDSMI(section string) []model.AcceleratorDevice {
+	devices := []model.AcceleratorDevice{}
+
+	trimmed := strings.TrimSpace(section)
+	if trimmed == "" {
+		return devices
+	}
+
+	var report amdSMIReport
+	if err := json.Unmarshal([]byte(trimmed), &report); err != nil || len(report.GPUData) == 0 {
+		// The bare array form.
+		var bare []amdSMIDevice
+		if err := json.Unmarshal([]byte(trimmed), &bare); err != nil {
+			return devices
+		}
+		report.GPUData = bare
+	}
+
+	for i, gpu := range report.GPUData {
+		device := model.AcceleratorDevice{
+			Source:        sectionAMDSMI,
+			Kind:          kindGPU,
+			Vendor:        "amd",
+			Index:         i,
+			Name:          valueOrEmpty(gpu.ASIC.MarketName),
+			DriverVersion: valueOrEmpty(gpu.Driver.Version),
+			PCIBusID:      normalizeBusID(valueOrEmpty(gpu.Bus.BDF)),
+		}
+		if mib, ok := amdSMIMemoryMiB(gpu.VRAM.Size); ok {
+			device.MemoryMiB = mib
+			device.MemoryKnown = true
+		}
+
+		devices = append(devices, device)
+	}
+
+	return devices
+}
+
+// amdSMIMemoryMiB converts a VRAM reading to MiB.
+//
+// amd-smi labels the unit "MB" but the number is binary: an MI300X reports
+// 196608, and 196608 MiB is exactly the 192 GiB the card carries, where 196608
+// decimal MB would be 187.5 GiB. So the label is followed only for the units
+// where it is unambiguous, and a bare "MB" from this tool is read as MiB.
+func amdSMIMemoryMiB(size amdSMIValue) (int, bool) {
+	if !size.Present || size.Value <= 0 {
+		return 0, false
+	}
+
+	switch strings.ToLower(strings.TrimSpace(size.Unit)) {
+	case "gib", "gb":
+		return int(size.Value * 1024), true
+	case "kib", "kb":
+		return int(size.Value / 1024), true
+	case "b", "bytes":
+		return int(size.Value / (1024 * 1024)), true
+	default:
+		// "MB", "MiB" and an absent unit all mean binary megabytes here.
+		return int(size.Value), true
 	}
 }

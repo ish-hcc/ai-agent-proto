@@ -110,6 +110,10 @@ func readNodeAccelerators(stdout string) (devices []model.AcceleratorDevice, sou
 	readings := make([]model.AcceleratorDevice, 0, 8)
 	readings = append(readings, record(sectionNVIDIA, parseNVIDIA(sections[sectionNVIDIA]))...)
 	readings = append(readings, record(sectionROCm, parseROCm(sections[sectionROCm]))...)
+	// amd-smi is appended after rocm-smi because the merge lets the later
+	// reading win, and on a node carrying both the supported tool should be the
+	// one that survives. rocm-smi takes only critical fixes from ROCm 7.0.
+	readings = append(readings, record(sectionAMDSMI, parseAMDSMI(sections[sectionAMDSMI]))...)
 	readings = append(readings, record(sectionHL, parseHLSMI(sections[sectionHL]))...)
 	readings = append(readings, record(sectionRBLN,
 		parseNPUTable(sections[sectionRBLN], sectionRBLN, "rebellions"))...)

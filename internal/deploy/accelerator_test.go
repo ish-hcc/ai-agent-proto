@@ -410,3 +410,90 @@ func TestSplitCSVKeepsUnquotedSpacedFields(t *testing.T) {
 		}
 	}
 }
+
+// The document shape is the one AMD's CLI emits: a gpu_data array of per GPU
+// objects split into sections, with every measured field carrying its unit as
+// {"value": N, "unit": "..."} and an unreadable field written as the plain
+// string "N/A" (ROCm/rocm-systems, projects/amdsmi/amdsmi_cli/subcommands/
+// static.py and tests/python/unit/gpu/test_cli_static_bus_pcie.py).
+func TestParseAMDSMI(t *testing.T) {
+	section := `{"gpu_data":[
+	  {"asic":{"market_name":"Instinct MI300X","vendor_name":"Advanced Micro Devices, Inc.","device_id":"0x74a1"},
+	   "bus":{"bdf":"0000:0C:00.0"},
+	   "vram":{"size":{"value":196608,"unit":"MB"}},
+	   "driver":{"version":"6.10.5"}}
+	]}`
+
+	devices := parseAMDSMI(section)
+	if len(devices) != 1 {
+		t.Fatalf("got %d devices, want 1", len(devices))
+	}
+
+	d := devices[0]
+	if d.Name != "Instinct MI300X" || d.Vendor != "amd" || d.Kind != kindGPU {
+		t.Errorf("device = %+v", d)
+	}
+	if d.Source != sectionAMDSMI {
+		t.Errorf("source = %q, want %q", d.Source, sectionAMDSMI)
+	}
+	if d.DriverVersion != "6.10.5" {
+		t.Errorf("driverVersion = %q", d.DriverVersion)
+	}
+	if d.PCIBusID != "0000:0c:00.0" {
+		t.Errorf("pciBusId = %q, want the sysfs form so the PCI join works", d.PCIBusID)
+	}
+	// 196608 is the card's 192 GiB in binary megabytes; read as decimal MB it
+	// would come out as 187.5 GiB and disagree with the catalog for no reason.
+	if !d.MemoryKnown || d.MemoryMiB != 196608 {
+		t.Errorf("memory = (%v,%d), want known and 196608 MiB", d.MemoryKnown, d.MemoryMiB)
+	}
+}
+
+// An unreadable field is the string "N/A" where a {value,unit} object would be.
+// It has to stay unknown: zero here would read as a card with no memory.
+func TestParseAMDSMIKeepsNotAvailableUnknown(t *testing.T) {
+	section := `{"gpu_data":[
+	  {"asic":{"market_name":"N/A"},"bus":{"bdf":"N/A"},
+	   "vram":{"size":"N/A"},"driver":{"version":"N/A"}}]}`
+
+	devices := parseAMDSMI(section)
+	if len(devices) != 1 {
+		t.Fatalf("got %d devices, want 1", len(devices))
+	}
+
+	d := devices[0]
+	if d.MemoryKnown || d.MemoryMiB != 0 {
+		t.Errorf("memory = (%v,%d), want unknown and untouched", d.MemoryKnown, d.MemoryMiB)
+	}
+	if d.Name != "" || d.DriverVersion != "" || d.PCIBusID != "" {
+		t.Errorf("N/A must not survive as a value: %+v", d)
+	}
+}
+
+// On a node carrying both tools the supported one has to be the reading that
+// survives the merge, because rocm-smi takes only critical fixes from ROCm 7.0.
+func TestAMDSMIWinsOverROCmSMI(t *testing.T) {
+	stdout := sectionMarker + sectionPCI + "===\n" +
+		"0000:0c:00.0 0x030000 0x1002 0x74a1 amdgpu -\n" +
+		sectionMarker + sectionROCm + "===\n" +
+		"device,Card series,VRAM Total Memory (B),Driver version,PCI Bus\n" +
+		"card0,Instinct,137438953472,6.7.0,0000:0C:00.0\n" +
+		sectionMarker + sectionAMDSMI + "===\n" +
+		`{"gpu_data":[{"asic":{"market_name":"Instinct MI300X"},"bus":{"bdf":"0000:0C:00.0"},` +
+		`"vram":{"size":{"value":196608,"unit":"MB"}},"driver":{"version":"6.10.5"}}]}` + "\n" +
+		sectionMarker + "end===\n"
+
+	devices, sources := readNodeAccelerators(stdout)
+	if len(devices) != 1 {
+		t.Fatalf("got %d devices, want 1: both tools describe the same card", len(devices))
+	}
+	if devices[0].Source != sectionAMDSMI || devices[0].DriverVersion != "6.10.5" {
+		t.Errorf("device = %+v, want the amd-smi reading to win", devices[0])
+	}
+	if devices[0].KernelDriver != "amdgpu" {
+		t.Errorf("kernelDriver = %q, want the bus fact kept", devices[0].KernelDriver)
+	}
+	if len(sources) != 3 {
+		t.Errorf("sources = %v, want pci, rocm-smi and amd-smi all recorded", sources)
+	}
+}

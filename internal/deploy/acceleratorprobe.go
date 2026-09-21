@@ -10,6 +10,7 @@ import (
 const (
 	sectionPCI     = "pci"
 	sectionNVIDIA  = "nvidia-smi"
+	sectionAMDSMI  = "amd-smi"
 	sectionROCm    = "rocm-smi"
 	sectionRBLN    = "rbln-stat"
 	sectionFuriosa = "furiosa-smi"
@@ -33,6 +34,12 @@ const sectionMarker = "===AIAPP-PROBE "
 // indistinguishable - which is exactly the case this probe exists to catch, since
 // an accelerator image whose driver never bound leaves a node looking healthy.
 //
+// AMD is asked twice. amd-smi is the supported tool: rocm-smi takes only critical
+// fixes from ROCm 7.0 and is gone in 10.1, so a current node may carry no rocm-smi
+// at all, while a node pinned to an older ROCm may carry no amd-smi. Asking both
+// costs one absent binary on either kind of node, and the merge keeps whichever
+// answered.
+//
 // Every vendor section is guarded by command -v and has its stderr dropped, so a
 // node carrying one vendor's tooling does not fail the probe for the others.
 const acceleratorProbeCommand = `
@@ -51,6 +58,9 @@ echo "` + sectionMarker + sectionNVIDIA + `==="
 command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi \
   --query-gpu=index,uuid,name,memory.total,driver_version,mig.mode.current,pci.bus_id \
   --format=csv,noheader,nounits 2>/dev/null
+echo "` + sectionMarker + sectionAMDSMI + `==="
+command -v amd-smi >/dev/null 2>&1 && amd-smi static \
+  --asic --bus --vram --driver --json 2>/dev/null
 echo "` + sectionMarker + sectionROCm + `==="
 command -v rocm-smi >/dev/null 2>&1 && rocm-smi \
   --showid --showproductname --showmeminfo vram --showdriverversion --showbus --csv 2>/dev/null
