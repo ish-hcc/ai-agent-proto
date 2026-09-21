@@ -700,7 +700,14 @@ func TestParseNVIDIAObservedLineWithBracketedNotAvailable(t *testing.T) {
 }
 
 func TestIsNotAvailableCoversBothSpellings(t *testing.T) {
-	for _, field := range []string{"N/A", "[N/A]", "n/a", " [Not Supported] ", "[Unknown Error]", ""} {
+	// "Not Found" and the deprecation sentence are both real field values, not
+	// errors: the first is what a vGPU host with no CUDA runtime answers for the
+	// CUDA version, and the second is what 610.57.04 returned here for
+	// display_mode, power_state and graphics_clock.
+	for _, field := range []string{
+		"N/A", "[N/A]", "n/a", " [Not Supported] ", "[Unknown Error]", "",
+		"Not Found", "Requested functionality has been deprecated",
+	} {
 		if !isNotAvailable(field) {
 			t.Errorf("%q should read as no value", field)
 		}

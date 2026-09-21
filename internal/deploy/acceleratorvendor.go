@@ -19,11 +19,17 @@ import (
 // nvidia-smi uses two spellings in the same line, which is why the bracketed
 // form is here as well as the bare one. Measured on this machine, one query
 // returned both: temperature.memory as "N/A" and mig.mode.current as "[N/A]".
+// "not found" is what a vGPU host with no CUDA runtime answers for the CUDA
+// version, and the deprecation notice is a whole sentence a driver returns
+// where a reading belongs: 610.57.04 on this machine puts it in display_mode,
+// power_state and graphics_clock. Neither is an error, and neither is a value.
 var notAvailable = []string{
 	"n/a",
 	"not supported",
+	"not found",
 	"unknown error",
 	"insufficient permissions",
+	"requested functionality has been deprecated",
 }
 
 // bdfPattern matches a PCI address in either the four digit form sysfs writes or
