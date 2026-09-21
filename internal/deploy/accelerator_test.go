@@ -718,3 +718,53 @@ func TestIsNotAvailableCoversBothSpellings(t *testing.T) {
 		}
 	}
 }
+
+// The probe asks rocm-smi for JSON and drops to CSV when a release does not
+// take the flag, so both have to read. The format is decided by the content
+// rather than by what was asked for.
+func TestParseROCmAcceptsEitherFormat(t *testing.T) {
+	csv := "device,Card series,Card vendor,VRAM Total Memory (B),Driver version,PCI Bus\n" +
+		`card0,Instinct MI100,"Advanced Micro Devices, Inc.",34342961152,6.7.0,0000:83:00.0` + "\n"
+
+	fromCSV := parseROCm(csv)
+	fromJSON := parseROCm(rocmFixture(t, "mi100_rocm602.json"))
+
+	if len(fromCSV) != 1 {
+		t.Fatalf("csv gave %d cards, want 1", len(fromCSV))
+	}
+	if len(fromJSON) == 0 {
+		t.Fatal("json gave no cards")
+	}
+
+	// The same card described in either format has to come out the same.
+	if fromCSV[0].PCIBusID != fromJSON[0].PCIBusID {
+		t.Errorf("bus = %q and %q", fromCSV[0].PCIBusID, fromJSON[0].PCIBusID)
+	}
+	if fromCSV[0].MemoryMiB != fromJSON[0].MemoryMiB {
+		t.Errorf("memory = %d and %d MiB", fromCSV[0].MemoryMiB, fromJSON[0].MemoryMiB)
+	}
+	if fromCSV[0].Source != sectionROCm || fromJSON[0].Source != sectionROCm {
+		t.Error("both are rocm-smi readings and must be credited as such")
+	}
+}
+
+// Whichever format arrives, a name key holding a bare identifier is refused so
+// that the architecture the PCI table worked out survives.
+func TestParseROCmCSVAlsoRefusesAHexName(t *testing.T) {
+	csv := "device,Card series,VRAM Total Memory (B),PCI Bus\n" +
+		"card0,0x1002,12868124672,0000:07:00.0\n"
+
+	devices := parseROCm(csv)
+	if len(devices) != 1 {
+		t.Fatalf("got %d cards, want 1", len(devices))
+	}
+	if devices[0].Name != "" {
+		t.Errorf("name = %q, want empty: 0x1002 is the vendor id, not a name", devices[0].Name)
+	}
+}
+
+func TestParseROCmOnEmptySection(t *testing.T) {
+	if got := parseROCm("   \n"); len(got) != 0 {
+		t.Errorf("got %d devices from an empty section, want 0", len(got))
+	}
+}

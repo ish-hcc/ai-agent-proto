@@ -128,6 +128,80 @@ func parseHLSMI(section string) []model.AcceleratorDevice {
 	return devices
 }
 
+// parseROCmCSV reads `rocm-smi ... --csv`, the fallback format.
+//
+// Columns are looked up by header name rather than by position: rocm-smi
+// changes both the order and the wording between releases, and a positional
+// read would put a driver version in the memory field without erroring. The
+// fields themselves go through a real CSV reader, because the vendor name
+// carries a comma and is therefore quoted.
+//
+// Unlike the JSON path this one has no captured output to test against, so it
+// stays the fallback rather than the first choice.
+func parseROCmCSV(section string) []model.AcceleratorDevice {
+	devices := []model.AcceleratorDevice{}
+
+	var header []string
+	for _, line := range strings.Split(section, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := splitCSV(line)
+		if header == nil {
+			if len(fields) > 1 && strings.EqualFold(fields[0], "device") {
+				header = fields
+			}
+
+			continue
+		}
+		if len(fields) < 2 || !strings.HasPrefix(strings.ToLower(fields[0]), "card") {
+			continue
+		}
+
+		column := func(want ...string) string {
+			for i, name := range header {
+				if i >= len(fields) {
+					break
+				}
+				lowered := strings.ToLower(name)
+				for _, w := range want {
+					if strings.Contains(lowered, w) {
+						return strings.TrimSpace(fields[i])
+					}
+				}
+			}
+
+			return ""
+		}
+
+		device := model.AcceleratorDevice{
+			Source:        sectionROCm,
+			Kind:          kindGPU,
+			Vendor:        "amd",
+			Index:         len(devices),
+			UUID:          valueOrEmpty(column("unique id", "uuid")),
+			Name:          valueOrEmpty(column("card series", "card model", "product name")),
+			DriverVersion: valueOrEmpty(column("driver version")),
+			PCIBusID:      normalizeBusID(valueOrEmpty(column("pci bus", "bus"))),
+		}
+		// The same refusal as the JSON path: an identifier is not a name, and
+		// passing it on would overwrite what the PCI table already worked out.
+		if isHexIdentifier(device.Name) {
+			device.Name = ""
+		}
+		// rocm-smi counts VRAM in bytes, unlike every other tool here.
+		if bytes, ok := parseNumber(column("vram total memory")); ok && bytes > 0 {
+			device.MemoryMiB = int(bytes / (1024 * 1024))
+			device.MemoryKnown = true
+		}
+
+		devices = append(devices, device)
+	}
+
+	return devices
+}
+
 // rocmCardPattern matches the keys rocm-smi uses for each card in its JSON.
 // Everything else at the top level is a section, and "system" is the one that
 // carries the driver version.
@@ -146,22 +220,35 @@ var (
 	rocmDriverKeys   = []string{"driver version"}
 )
 
-// parseROCm reads `rocm-smi ... --json`.
+// parseROCm reads whichever of rocm-smi's two output formats arrived.
+//
+// Both are accepted because the probe asks for JSON and falls back to CSV, and
+// a release that rejects one flag should cost the reading nothing. The format
+// is decided by the first character rather than by what was asked for, so the
+// parser stays right even if the shell's fallback changes.
+func parseROCm(section string) []model.AcceleratorDevice {
+	trimmed := strings.TrimSpace(section)
+	if trimmed == "" {
+		return []model.AcceleratorDevice{}
+	}
+
+	if strings.HasPrefix(trimmed, "{") {
+		return parseROCmJSON(trimmed)
+	}
+
+	return parseROCmCSV(trimmed)
+}
+
+// parseROCmJSON reads `rocm-smi ... --json`.
 //
 // The document is an object keyed by card, plus a "system" section holding the
 // driver version, which is reported once for the host rather than per card.
 //
-// JSON rather than the CSV the same tool also offers: the CSV puts a vendor
-// name containing a comma in a quoted field, and more usefully, real captures
-// of the JSON exist to test against across four ROCm releases while none exist
-// for the CSV.
-func parseROCm(section string) []model.AcceleratorDevice {
+// This is the format the probe asks for first: real captures of it exist to
+// test against across four ROCm releases, and none exist for the CSV.
+func parseROCmJSON(section string) []model.AcceleratorDevice {
 	devices := []model.AcceleratorDevice{}
-
 	trimmed := strings.TrimSpace(section)
-	if trimmed == "" {
-		return devices
-	}
 
 	// Every value in this document is a string, including the numbers.
 	var report map[string]map[string]string

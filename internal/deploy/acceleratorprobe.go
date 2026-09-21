@@ -40,6 +40,12 @@ const sectionMarker = "===AIAPP-PROBE "
 // costs one absent binary on either kind of node, and the merge keeps whichever
 // answered.
 //
+// rocm-smi itself is asked for JSON and then for CSV. JSON is the format with
+// captured output to test against, but a release that does not take the flag
+// answers with nothing at all rather than an error, and dropping to the other
+// format costs one more invocation only on the node where the first came back
+// empty.
+//
 // Every vendor section is guarded by command -v and has its stderr dropped, so a
 // node carrying one vendor's tooling does not fail the probe for the others.
 //
@@ -68,8 +74,12 @@ printf '\n' ; echo "` + sectionMarker + sectionAMDSMI + `==="
 command -v amd-smi >/dev/null 2>&1 && amd-smi static \
   --asic --bus --vram --driver --json 2>/dev/null
 printf '\n' ; echo "` + sectionMarker + sectionROCm + `==="
-command -v rocm-smi >/dev/null 2>&1 && rocm-smi \
-  --showid --showproductname --showmeminfo vram --showdriverversion --showbus --json 2>/dev/null
+if command -v rocm-smi >/dev/null 2>&1; then
+  rocm_args="--showid --showproductname --showmeminfo vram --showdriverversion --showbus"
+  rocm_out=$(rocm-smi $rocm_args --json 2>/dev/null)
+  if [ -z "$rocm_out" ]; then rocm_out=$(rocm-smi $rocm_args --csv 2>/dev/null); fi
+  printf '%s\n' "$rocm_out"
+fi
 printf '\n' ; echo "` + sectionMarker + sectionRBLN + `==="
 command -v rbln-stat >/dev/null 2>&1 && rbln-stat 2>/dev/null
 printf '\n' ; echo "` + sectionMarker + sectionFuriosa + `==="
