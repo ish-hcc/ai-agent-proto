@@ -2,3 +2,4 @@ bin/
 conf/setup.env
 data/
 .env
+.idea/
