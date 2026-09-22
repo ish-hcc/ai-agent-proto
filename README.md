@@ -4,8 +4,6 @@
 >
 > - **AI-App ④** AI반도체 기반 **AI 응용 배포 및 운용** (메타데이터 규격 / 등록·배포 / 라이프사이클)
 > - **AI-Ops ⑥** **AI 응용 자동화 에이전트** (구조 설계 / 배포·제어 자동화 / 정보 아카이빙)
->
-> 설계 근거: [`../ai-agent-research/06-design-implications.md`](../ai-agent-research/06-design-implications.md)
 
 ## 1. 이게 뭘 하는 건가 - 한 문장
 
@@ -31,7 +29,7 @@ review  : creationViable=true, "All VMs can be created successfully"
 
 ## 2. 왜 이렇게 만들었나 - 다섯 개의 설계 결정
 
-근거는 전부 [`../ai-agent-research`](../ai-agent-research) 의 사례 조사에 있습니다.
+근거는 전부 과제 산출물인 기술 조사 문서의 사례 조사에 있습니다. 그 문서는 이 저장소 밖에 있습니다.
 
 | # | 결정 | 근거 |
 |---|---|---|
